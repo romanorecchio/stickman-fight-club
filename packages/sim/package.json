@@ -1,0 +1,13 @@
+{
+  "name": "@sfc/sim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sfc/shared": "*",
+    "planck": "^1.4.2"
+  }
+}

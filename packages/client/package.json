@@ -1,0 +1,14 @@
+{
+  "name": "@sfc/client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 4317 --strictPort",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@sfc/shared": "*",
+    "@sfc/sim": "*"
+  }
+}

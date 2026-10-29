@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stickman Fight Club</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%23140e10' width='32' height='32'/%3E%3Ccircle cx='16' cy='8' r='3.2' fill='none' stroke='%23f4efe4' stroke-width='1.6'/%3E%3Cpath d='M16 11.2v8M16 14.5l-6 4M16 14.5l6 3.2M16 19.2l-5 7M16 19.2l5 7' fill='none' stroke='%23f4efe4' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="view" aria-label="Stickman training room"></canvas>
+    <div class="vignette" aria-hidden="true"></div>
+    <div id="hud">
+      <header class="brand-block">
+        <p class="eyebrow">Training room</p>
+        <h1>Stickman <span>Fight Club</span></h1>
+      </header>
+      <div class="bars" aria-live="polite">
+        <div class="bar you">
+          <div class="bar-top"><span>You</span><em id="state-player">Ready</em><b id="hp-player-n">100</b></div>
+          <div class="track"><div class="fill" id="hp-player"></div></div>
+        </div>
+        <div class="bar them">
+          <div class="bar-top"><span>Dummy</span><em id="state-dummy">Ready</em><b id="hp-dummy-n">100</b></div>
+          <div class="track"><div class="fill" id="hp-dummy"></div></div>
+        </div>
+      </div>
+      <p id="stats" class="stats">FPS —</p>
+      <p id="banner" class="banner" hidden></p>
+      <div class="dock">
+        <p class="controls">
+          <kbd>A</kbd><kbd>D</kbd> move
+          <kbd>W</kbd> jump
+          <kbd>S</kbd> crouch
+          <kbd>Shift</kbd> sprint
+          <kbd>Space</kbd> kick
+          <kbd>LMB</kbd> punch
+          <kbd>RMB</kbd> block
+          <kbd>E</kbd> grab
+          <kbd>Q</kbd> throw
+          <span>mouse aims</span>
+          <kbd>Esc</kbd> pause
+          <kbd>F3</kbd> bodies
+        </p>
+        <div class="dock-actions">
+          <button type="button" id="pause-btn">Pause</button>
+          <button type="button" id="reset-btn">Reset</button>
+          <button type="button" id="mute-btn" aria-pressed="false">Sound on</button>
+        </div>
+        <details id="tune">
+          <summary>Balance tuning</summary>
+          <div id="sliders" class="sliders"></div>
+          <button type="button" id="tune-reset">Restore defaults</button>
+        </details>
+      </div>
+      <div id="pause-layer" class="pause-layer" hidden>
+        <p>Paused</p>
+        <span>Esc to keep fighting</span>
+      </div>
+    </div>
+    <div class="touch" id="touch">
+      <div class="touch-left">
+        <button type="button" data-hold="left">Left</button>
+        <button type="button" data-hold="right">Right</button>
+        <button type="button" data-hold="jump">Jump</button>
+        <button type="button" data-hold="crouch">Crouch</button>
+      </div>
+      <div class="touch-right">
+        <button type="button" data-hold="punch">Punch</button>
+        <button type="button" data-hold="kick">Kick</button>
+        <button type="button" data-hold="block">Block</button>
+        <button type="button" data-hold="grab">Grab</button>
+        <button type="button" data-hold="throw">Throw</button>
+      </div>
+    </div>
+    <p id="boot-error" class="boot-error" hidden>Could not start the canvas.</p>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
