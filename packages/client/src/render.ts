@@ -294,6 +294,12 @@ function drawFighter(
   const look = PALETTE[fighter.color % PALETTE.length] ?? PALETTE[0];
   const pt = (name: PointName) => screenPoint(cam, view, fighter.points[name]);
   ctx.save();
+  if (fighter.scale !== 1) {
+    const hip = pt('hip');
+    ctx.translate(hip.x, hip.y);
+    ctx.scale(fighter.scale, fighter.scale);
+    ctx.translate(-hip.x, -hip.y);
+  }
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalAlpha = fighter.protecting ? 0.55 + 0.45 * Math.sin(performance.now() / 80) : front ? 1 : 0.72;
@@ -311,7 +317,7 @@ function drawFighter(
     stroke(ctx, [pt('hip'), pt('neck')], width + 7, look.ink);
     stroke(ctx, [pt('hip'), pt('neck')], width + 2, bone);
     const head = pt('head');
-    const headR = 0.155 * cam.zoom;
+    const headR = 0.155 * cam.zoom * (fighter.giantHead ? 1.85 : 1);
     ctx.beginPath();
     ctx.fillStyle = look.ink;
     ctx.arc(head.x, head.y, headR + 3, 0, Math.PI * 2);

@@ -118,6 +118,13 @@ export class Accounts {
         user_id INTEGER NOT NULL,
         expires INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS chaos_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL,
+        actor TEXT NOT NULL,
+        action TEXT NOT NULL,
+        detail TEXT NOT NULL
+      );
     `);
   }
 
@@ -230,6 +237,34 @@ export class Accounts {
         credit.userId,
       );
     }
+  }
+
+  /** Session for the env-authenticated owner. Does not store their password. */
+  loginOwner(rawName: unknown, now = Date.now()): { token: string; profile: Profile } | { error: string } {
+    const username = sanitizeUsername(rawName);
+    if (!username) return { error: 'Name and password required.' };
+    const existing = this.db.prepare('SELECT id FROM users WHERE username = ?').get(username) as { id: number } | undefined;
+    let id = existing?.id;
+    if (!id) {
+      const salt = randomBytes(16).toString('hex');
+      const hash = scryptSync(randomBytes(32), salt, 32).toString('hex');
+      const result = this.db.prepare('INSERT INTO users (username, salt, hash) VALUES (?, ?, ?)').run(username, salt, hash);
+      id = Number(result.lastInsertRowid);
+    }
+    return { token: this.issue(id, now), profile: this.profileById(id)! };
+  }
+
+  audit(actor: string, action: string, detail: string): void {
+    this.db.prepare('INSERT INTO chaos_audit (at, actor, action, detail) VALUES (?, ?, ?, ?)').run(
+      Date.now(),
+      actor.slice(0, 32),
+      action.slice(0, 80),
+      detail.slice(0, 180),
+    );
+  }
+
+  recentAudit(limit = 20): { action: string; detail: string }[] {
+    return this.db.prepare('SELECT action, detail FROM chaos_audit ORDER BY id DESC LIMIT ?').all(limit) as { action: string; detail: string }[];
   }
 
   leaderboard(limit = 10): { username: string; level: number; xp: number; wins: number; kills: number }[] {

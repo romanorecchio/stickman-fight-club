@@ -96,6 +96,12 @@ export class Fighter {
   pulling: string | null = null;
   infected = false;
   moveScale = 1;
+  chaosInvisible = false;
+  chaosTiny = false;
+  chaosGiant = false;
+  chaosBackfire = false;
+  chaosNoodle = false;
+  chaosFlip = false;
   maxHp = 100;
   color: number;
   hat = 'none';

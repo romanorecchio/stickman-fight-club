@@ -178,7 +178,9 @@ export class Simulation {
 
     for (const fighter of roster) {
       const raw = inputs.get(fighter.id) ?? fighter.lastInput;
-      fighter.lastInput = { ...raw, moveX: clamp(raw.moveX, -1, 1) };
+      const moveX = clamp(raw.moveX, -1, 1) * (fighter.chaosFlip ? -1 : 1);
+      const aimX = fighter.chaosFlip ? -raw.aimX : raw.aimX;
+      fighter.lastInput = { ...raw, moveX, aimX };
       fighter.vyPrev = fighter.bodies.torso.getLinearVelocity().y;
     }
     this.tickWeapons(stepDt, inputs);
@@ -278,6 +280,32 @@ export class Simulation {
     }
     this.effects = [];
     this.hitQueue.length = 0;
+  }
+
+  setGravityOverride(y: number | null): void {
+    this.world.setGravity({ x: 0, y: y === null ? this.params.gravity : y });
+  }
+
+  slip(id: string): void {
+    const fighter = this.fighters.get(id);
+    if (fighter) fighter.slipLeft = Math.max(fighter.slipLeft, 0.3);
+  }
+
+  setChaosFlags(
+    id: string,
+    flags: { invisible: boolean; tiny: boolean; giant: boolean; backfire: boolean; noodle: boolean; flip: boolean; heavy: boolean },
+  ): void {
+    const fighter = this.fighters.get(id);
+    if (!fighter) return;
+    fighter.chaosInvisible = flags.invisible;
+    fighter.chaosTiny = flags.tiny;
+    fighter.chaosGiant = flags.giant;
+    fighter.chaosBackfire = flags.backfire;
+    fighter.chaosNoodle = flags.noodle;
+    fighter.chaosFlip = flags.flip;
+    if (flags.heavy) fighter.moveScale = 0.55;
+    else if (fighter.infected) fighter.moveScale = 1.35;
+    else fighter.moveScale = 1;
   }
 
   setBalanceParams(partial: Partial<BalanceParams>): void {
@@ -679,6 +707,9 @@ export class Simulation {
       infected: f.infected,
       hat: f.hat,
       face: f.face,
+      invisible: f.chaosInvisible,
+      scale: f.chaosTiny ? 0.62 : 1,
+      giantHead: f.chaosGiant,
       parts: PARTS.map((part) => poseOf(f.bodies[part], part)),
       points: pointsOf(f),
     };

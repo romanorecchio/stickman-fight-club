@@ -63,6 +63,9 @@ export interface FighterSnapshot {
   infected: boolean;
   hat: string;
   face: string;
+  invisible: boolean;
+  scale: number;
+  giantHead: boolean;
   parts: PartPose[];
   points: Record<PointName, Vec2>;
 }

@@ -10,6 +10,7 @@ export interface OnlineHooks {
   onAccount?: (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => void;
   onBoard?: (rows: BoardRow[]) => void;
   onReplay?: (frames: Snapshot[]) => void;
+  onGate?: (payload: { effects: { id: string; name: string; tab: string }[] }) => void;
 }
 
 export interface AccountProfile {
@@ -72,6 +73,7 @@ export class OnlineSession {
     this.socket.on('account', (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => this.hooks.onAccount?.(payload));
     this.socket.on('board', (rows: BoardRow[]) => this.hooks.onBoard?.(rows));
     this.socket.on('replay', (frames: Snapshot[]) => this.hooks.onReplay?.(frames));
+    this.socket.on('gate-open', (payload: { effects: { id: string; name: string; tab: string }[] }) => this.hooks.onGate?.(payload));
     this.socket.on('pong', (sent: number) => {
       if (typeof sent === 'number') this.rtt = Math.max(1, Date.now() - sent);
     });
@@ -95,6 +97,11 @@ export class OnlineSession {
 
   emit(event: string, body?: unknown): void {
     this.socket?.emit(event, body);
+  }
+
+  listen(event: string, fn: (body: unknown) => void): void {
+    this.connect();
+    this.socket?.on(event, fn);
   }
 
   sendInput(input: InputFrame): void {

@@ -101,8 +101,24 @@ function frame(now: number): void {
   updateCamera(camera, shown, dt, view, shake && !reduceMotion, focusId);
   const alpha = mode === 'online' || paused || replay ? 1 : acc / FIXED_DT;
   drawFrame(ctx!, mode === 'online' || replay ? shown : interpolate(prev, curr, alpha), camera, view, debug, now);
+  const fx = (shown as Snapshot & { fx?: import('@sfc/shared').PrivateFx | null }).fx;
+  if (canvas) canvas.style.transform = fx?.flipScreen ? 'scaleY(-1)' : fx?.mirror ? 'scaleX(-1)' : '';
+  paintScare(fx);
   paintHud(curr);
   requestAnimationFrame(frame);
+}
+
+let scareMod: typeof import('./scare.js') | null = null;
+
+function paintScare(fx: import('@sfc/shared').PrivateFx | null | undefined): void {
+  if (fx?.jumpscare) {
+    const dismiss = () => online?.emit('dismiss-scare');
+    if (scareMod) scareMod.showScare(fx, dismiss);
+    else void import('./scare.js').then((mod) => {
+      scareMod = mod;
+      mod.showScare(fx, dismiss);
+    });
+  } else scareMod?.hideScare();
 }
 
 function replayFrame(dt: number): Snapshot | null {
@@ -155,6 +171,9 @@ function blendLocal(predicted: FighterSnapshot, server: FighterSnapshot): Fighte
     infected: server.infected,
     hat: server.hat,
     face: server.face,
+    invisible: server.invisible,
+    scale: server.scale,
+    giantHead: server.giantHead,
   };
 }
 
@@ -533,6 +552,7 @@ function readSettings(): Record<string, unknown> {
     hillSeconds: Number(document.querySelector<HTMLInputElement>('#hill-seconds')?.value ?? 8),
     hillMoves: document.querySelector<HTMLInputElement>('#hill-moves')?.checked ?? false,
     lateJoin: document.querySelector<HTMLSelectElement>('#late-join')?.value ?? 'spectate',
+    chaosBanner: document.querySelector<HTMLInputElement>('#chaos-banner')?.checked ?? false,
     map: document.querySelector<HTMLSelectElement>('#map-select')?.value ?? 'classic',
     weapons: document.querySelector<HTMLInputElement>('#weapons-on')?.checked ?? true,
     categories: {
@@ -575,8 +595,20 @@ function ensureOnline(): void {
       replayIndex = 0;
       replayAcc = 0;
     },
+    onGate: (payload) => {
+      void import('./owner-panel.js').then((mod) => {
+        if (online) mod.openPanel(online, payload.effects);
+      });
+    },
   });
 }
+
+window.addEventListener('keydown', (event) => {
+  if (!event.ctrlKey || !event.shiftKey || event.code !== 'F9') return;
+  event.preventDefault();
+  ensureOnline();
+  online?.emit('gate', { account: localStorage.getItem('sfc-account') });
+});
 
 function accountToken(): string | undefined {
   return localStorage.getItem('sfc-account') || undefined;
@@ -614,7 +646,7 @@ function showBoard(rows: BoardRow[]): void {
     : 'No ranked fighters yet.';
 }
 
-function renderLobby(lobby: { code: string; hostId: string; settings?: { mode?: string; map?: string }; players: { id: string; name: string; host: boolean; connected: boolean; team?: string }[] }): void {
+function renderLobby(lobby: { code: string; hostId: string; chaosBanner?: boolean; settings?: { mode?: string; map?: string }; players: { id: string; name: string; host: boolean; connected: boolean; team?: string }[] }): void {
   const code = document.querySelector('#room-code');
   const url = document.querySelector('#join-url');
   const list = document.querySelector('#lobby-list');
@@ -630,6 +662,7 @@ function renderLobby(lobby: { code: string; hostId: string; settings?: { mode?: 
         const item = document.createElement('li');
         const team = player.team && player.team !== 'none' ? ` · ${player.team}` : '';
         item.textContent = `${player.name}${team}${player.host ? ' · host' : ''}${player.connected ? '' : ' · reconnecting'}`;
+        if (lobby.chaosBanner && player.host) item.textContent += ' · CHAOS MODE';
         return item;
       }),
     );

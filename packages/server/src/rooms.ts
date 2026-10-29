@@ -14,12 +14,14 @@ import {
   type LobbyState,
   type NetSnapshot,
   type RoomError,
+  type PrivateFx,
   type Snapshot,
   type Welcome,
 } from '@sfc/shared';
 import { MatchRules, type Loadout, type TeamId } from '@sfc/shared';
 import { Simulation } from '@sfc/sim';
 import type { Accounts } from './accounts.js';
+import { ChaosControl } from './chaos.js';
 
 export interface Joined {
   welcome: Welcome;
@@ -59,6 +61,9 @@ interface Room {
   statsSaved: boolean;
   history: Snapshot[];
   deathsSeen: number;
+  chaosPhase: string;
+  chaosBanner: boolean;
+  fx: Map<string, PrivateFx>;
   slots: Map<string, Slot>;
   joinCounter: number;
   acc: number;
@@ -79,7 +84,10 @@ export class MatchDirectory {
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.maxPlayers = options.maxPlayers ?? MAX_PLAYERS;
     this.accounts = options.accounts ?? null;
+    this.chaos = new ChaosControl(this.accounts);
   }
+
+  private readonly chaos: ChaosControl;
 
   onSnapshot(listener: (code: string, snap: NetSnapshot) => void): void {
     this.listener = listener;
@@ -102,6 +110,34 @@ export class MatchDirectory {
     if (typeof body.jumpscares === 'boolean') slot.prefs.jumpscares = body.jumpscares;
     if (typeof body.reduceMotion === 'boolean') slot.prefs.reduceMotion = body.reduceMotion;
     if (typeof body.reduceFlash === 'boolean') slot.prefs.reduceFlash = body.reduceFlash;
+  }
+
+  noteOwner(accountToken: string): void {
+    this.chaos.noteOwner(accountToken);
+  }
+
+  gate(accountToken: unknown): { effects: { id: string; name: string; tab: string }[] } | null {
+    return this.chaos.begin(accountToken);
+  }
+
+  gateCode(accountToken: unknown, code: unknown): { ok: true } | { error: string } | null {
+    return this.chaos.submitCode(accountToken, code);
+  }
+
+  chaosCast(roomToken: string, accountToken: unknown, body: unknown): { ok: true } | { error: string } | null {
+    const room = this.roomFor(roomToken);
+    if (!room) return null;
+    return this.chaos.cast(accountToken, body, [...room.slots.keys()]);
+  }
+
+  chaosReset(roomToken: string, accountToken: unknown): { ok: true } | null {
+    if (!this.roomFor(roomToken)) return null;
+    return this.chaos.reset(accountToken);
+  }
+
+  dismissScare(roomToken: string): void {
+    const found = this.tokens.get(roomToken);
+    if (found) this.chaos.dismiss(found.id);
   }
 
   codeFor(token: string): string | null {
@@ -214,6 +250,9 @@ export class MatchDirectory {
     if (!room || !slot) return { code: 'token', message: 'You are not in a lobby.' };
     if (room.hostId !== slot.id) return { code: 'closed', message: 'Only the host can change settings.' };
     room.match.queueSettings(raw);
+    if (raw && typeof raw === 'object' && typeof (raw as { chaosBanner?: unknown }).chaosBanner === 'boolean') {
+      room.chaosBanner = (raw as { chaosBanner: boolean }).chaosBanner;
+    }
     if (room.match.phase === 'lobby') this.ensureMap(room);
     return null;
   }
@@ -309,6 +348,26 @@ export class MatchDirectory {
           this.replayListener?.(room.code, room.history.map((frame) => ({ ...frame, fighters: frame.fighters.map((fighter) => ({ ...fighter })) })));
         }
         room.deathsSeen = deaths;
+        if (room.chaosPhase !== room.match.phase) {
+          if (room.match.phase === 'roundEnd' || room.match.phase === 'lobby') this.chaos.clearRound();
+          room.chaosPhase = room.match.phase;
+        }
+        room.fx = this.chaos.apply(
+          room.sim,
+          room.sim.summaries().map((row) => {
+            const prefs = room.slots.get(row.id)?.prefs;
+            return {
+              id: row.id,
+              hp: row.hp,
+              x: row.x,
+              y: row.y,
+              jumpscares: prefs?.jumpscares !== false,
+              reduceMotion: prefs?.reduceMotion === true,
+              reduceFlash: prefs?.reduceFlash === true,
+            };
+          }),
+          now,
+        );
         if (room.match.phase === 'matchEnd' && !room.statsSaved) {
           room.statsSaved = true;
           this.saveStats(room);
@@ -333,7 +392,15 @@ export class MatchDirectory {
 
   private snapshotFor(room: Room, slot: Slot, now: number): NetSnapshot {
     const snap = room.sim.getSnapshot(slot.id);
-    return { ...snap, you: slot.id, ackSeq: slot.lastSeq, serverNow: now, match: room.match.view() };
+    snap.fighters = snap.fighters.filter((fighter) => !fighter.invisible || fighter.id === slot.id);
+    return {
+      ...snap,
+      you: slot.id,
+      ackSeq: slot.lastSeq,
+      serverNow: now,
+      match: room.match.view(),
+      fx: room.fx.get(slot.id) ?? null,
+    };
   }
 
   private expire(room: Room, now: number): void {
@@ -351,6 +418,7 @@ export class MatchDirectory {
     room.slots.delete(id);
     room.sim.removeFighter(id);
     room.match.remove(id);
+    this.chaos.dropPlayer(id);
     if (room.hostId === id) this.migrateHost(room);
     if (room.slots.size === 0) this.rooms.delete(room.code);
   }
@@ -445,6 +513,7 @@ export class MatchDirectory {
       maxPlayers: this.maxPlayers,
       settings: room.match.settings,
       phase: room.match.phase,
+      chaosBanner: room.chaosBanner,
       players: [...room.slots.values()]
         .sort((a, b) => a.joinIndex - b.joinIndex)
         .map((slot) => ({
@@ -501,6 +570,9 @@ export class MatchDirectory {
       statsSaved: false,
       history: [],
       deathsSeen: 0,
+      chaosPhase: 'lobby',
+      chaosBanner: false,
+      fx: new Map(),
       slots: new Map(),
       joinCounter: 0,
       acc: 0,

@@ -25,6 +25,7 @@ export interface LobbyState {
   maxPlayers: number;
   settings: MatchSettings;
   phase: string;
+  chaosBanner?: boolean;
 }
 
 export interface Welcome {
@@ -41,6 +42,17 @@ export interface NetSnapshot extends Snapshot {
   ackSeq: number;
   serverNow: number;
   match: MatchView | null;
+  fx?: PrivateFx | null;
+}
+
+export interface PrivateFx {
+  jumpscare: 'nightmare' | 'goofy' | 'crash' | 'custom' | null;
+  customImage: string | null;
+  banner: string | null;
+  flipScreen: boolean;
+  mirror: boolean;
+  reduceMotion: boolean;
+  reduceFlash: boolean;
 }
 
 export interface RoomError {

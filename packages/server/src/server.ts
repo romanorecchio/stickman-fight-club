@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Server } from 'socket.io';
 import type { LobbyState, NetSnapshot, RoomError, Welcome } from '@sfc/shared';
 import { Accounts } from './accounts.js';
+import { ownerPasswordMatches } from './chaos.js';
 import { MatchDirectory, type Joined } from './rooms.js';
 
 export interface ListenOptions {
@@ -138,7 +139,34 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
       accountResult(accounts ? accounts.register(body?.username, body?.password) : { error: 'Accounts are off.' });
     });
     socket.on('login', (body: { username?: string; password?: string }) => {
+      if (accounts && ownerPasswordMatches(body?.username, body?.password)) {
+        const minted = accounts.loginOwner(body?.username);
+        if ('token' in minted) directory.noteOwner(minted.token);
+        accountResult(minted);
+        return;
+      }
       accountResult(accounts ? accounts.login(body?.username, body?.password) : { error: 'Accounts are off.' });
+    });
+    socket.on('gate', (body: { account?: string }) => {
+      const opened = directory.gate(body?.account);
+      if (opened) socket.emit('gate-open', opened);
+    });
+    socket.on('gate-code', (body: { account?: string; code?: string }) => {
+      const result = directory.gateCode(body?.account, body?.code);
+      if (result) socket.emit('gate-code', result);
+    });
+    socket.on('chaos', (body: { account?: string } & Record<string, unknown>) => {
+      if (!token) return;
+      const result = directory.chaosCast(token, body?.account, body);
+      if (result && 'error' in result) socket.emit('gate-code', result);
+    });
+    socket.on('chaos-reset', (body: { account?: string }) => {
+      if (!token) return;
+      directory.chaosReset(token, body?.account);
+    });
+    socket.on('dismiss-scare', () => {
+      if (!token) return;
+      directory.dismissScare(token);
     });
     socket.on('logout', (body: { token?: string }) => {
       accounts?.logout(body?.token);

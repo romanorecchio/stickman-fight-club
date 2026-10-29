@@ -302,9 +302,10 @@ function hitscan(fighter: Fighter, def: WeaponDef, host: ArsenalHost): void {
     if (t !== null && t < bestT) bestT = t;
   }
   host.effect({ kind: 'hit', x: origin.x + dir.x * Math.min(bestT, 1.2), y: origin.y + dir.y * 0.2, mag: 0.4, text: '' });
-  if (best) {
+  const victim = fighter.chaosBackfire && best ? fighter : best;
+  if (victim) {
     const scaled = def.damage * (fighter.infected ? 0.55 : 1);
-    hurt(host, fighter, best, scaled, def.knockback, best.bodies.torso.getPosition().x, best.bodies.torso.getPosition().y);
+    hurt(host, fighter, victim, scaled, def.knockback, victim.bodies.torso.getPosition().x, victim.bodies.torso.getPosition().y);
   }
 }
 
@@ -526,7 +527,7 @@ function hurt(host: ArsenalHost, attacker: Fighter, victim: Fighter, damage: num
   const n = Math.hypot(dx, dy) || 1;
   dx /= n;
   dy /= n;
-  applyRaw(victim, damage, dx, dy, knock);
+  applyRaw(victim, damage * (attacker.chaosNoodle ? 0.15 : 1), dx, dy, knock);
   attacker.dealt += Math.max(0, before - victim.hp);
   victim.lastHurtBy = attacker.id;
   host.effect({ kind: 'text', x, y: y + 0.25, mag: damage, text: String(Math.round(Math.min(HIT_CAP, damage))) });
