@@ -21,7 +21,7 @@ import {
 import { MatchRules, type Loadout, type TeamId } from '@sfc/shared';
 import { Simulation } from '@sfc/sim';
 import type { Accounts } from './accounts.js';
-import { ChaosControl } from './chaos.js';
+import { CHAOS_EFFECTS, ChaosControl } from './chaos.js';
 
 export interface Joined {
   welcome: Welcome;
@@ -61,6 +61,7 @@ interface Room {
   statsSaved: boolean;
   history: Snapshot[];
   deathsSeen: number;
+  chaos: ChaosControl;
   chaosPhase: string;
   chaosBanner: boolean;
   fx: Map<string, PrivateFx>;
@@ -84,10 +85,7 @@ export class MatchDirectory {
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.maxPlayers = options.maxPlayers ?? MAX_PLAYERS;
     this.accounts = options.accounts ?? null;
-    this.chaos = new ChaosControl(this.accounts);
   }
-
-  private readonly chaos: ChaosControl;
 
   onSnapshot(listener: (code: string, snap: NetSnapshot) => void): void {
     this.listener = listener;
@@ -112,32 +110,28 @@ export class MatchDirectory {
     if (typeof body.reduceFlash === 'boolean') slot.prefs.reduceFlash = body.reduceFlash;
   }
 
-  noteOwner(accountToken: string): void {
-    this.chaos.noteOwner(accountToken);
+  chaosCatalog(): { effects: { id: string; name: string; tab: string }[] } {
+    return { effects: CHAOS_EFFECTS };
   }
 
-  gate(accountToken: unknown): { effects: { id: string; name: string; tab: string }[] } | null {
-    return this.chaos.begin(accountToken);
-  }
-
-  gateCode(accountToken: unknown, code: unknown): { ok: true } | { error: string } | null {
-    return this.chaos.submitCode(accountToken, code);
-  }
-
-  chaosCast(roomToken: string, accountToken: unknown, body: unknown): { ok: true } | { error: string } | null {
+  /** Any connected player may cast at players in their own room. */
+  chaosCast(roomToken: string, body: unknown): { ok: true; effect: string } | { error: string } | null {
     const room = this.roomFor(roomToken);
-    if (!room) return null;
-    return this.chaos.cast(accountToken, body, [...room.slots.keys()]);
+    const found = this.tokens.get(roomToken);
+    if (!room || !found) return null;
+    return room.chaos.cast(found.id, body, [...room.slots.keys()]);
   }
 
-  chaosReset(roomToken: string, accountToken: unknown): { ok: true } | null {
-    if (!this.roomFor(roomToken)) return null;
-    return this.chaos.reset(accountToken);
+  chaosReset(roomToken: string): { ok: true; effect: string } | null {
+    const room = this.roomFor(roomToken);
+    const found = this.tokens.get(roomToken);
+    if (!room || !found) return null;
+    return room.chaos.reset(found.id);
   }
 
   dismissScare(roomToken: string): void {
     const found = this.tokens.get(roomToken);
-    if (found) this.chaos.dismiss(found.id);
+    if (found) this.rooms.get(found.code)?.chaos.dismiss(found.id);
   }
 
   codeFor(token: string): string | null {
@@ -349,10 +343,10 @@ export class MatchDirectory {
         }
         room.deathsSeen = deaths;
         if (room.chaosPhase !== room.match.phase) {
-          if (room.match.phase === 'roundEnd' || room.match.phase === 'lobby') this.chaos.clearRound();
+          if (room.match.phase === 'roundEnd' || room.match.phase === 'lobby') room.chaos.clearRound();
           room.chaosPhase = room.match.phase;
         }
-        room.fx = this.chaos.apply(
+        room.fx = room.chaos.apply(
           room.sim,
           room.sim.summaries().map((row) => {
             const prefs = room.slots.get(row.id)?.prefs;
@@ -418,7 +412,7 @@ export class MatchDirectory {
     room.slots.delete(id);
     room.sim.removeFighter(id);
     room.match.remove(id);
-    this.chaos.dropPlayer(id);
+    room.chaos.dropPlayer(id);
     if (room.hostId === id) this.migrateHost(room);
     if (room.slots.size === 0) this.rooms.delete(room.code);
   }
@@ -570,6 +564,7 @@ export class MatchDirectory {
       statsSaved: false,
       history: [],
       deathsSeen: 0,
+      chaos: new ChaosControl(this.accounts),
       chaosPhase: 'lobby',
       chaosBanner: false,
       fx: new Map(),

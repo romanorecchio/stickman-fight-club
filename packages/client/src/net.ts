@@ -73,7 +73,7 @@ export class OnlineSession {
     this.socket.on('account', (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => this.hooks.onAccount?.(payload));
     this.socket.on('board', (rows: BoardRow[]) => this.hooks.onBoard?.(rows));
     this.socket.on('replay', (frames: Snapshot[]) => this.hooks.onReplay?.(frames));
-    this.socket.on('gate-open', (payload: { effects: { id: string; name: string; tab: string }[] }) => this.hooks.onGate?.(payload));
+    this.socket.on('chaos-catalog', (payload: { effects: { id: string; name: string; tab: string }[] }) => this.hooks.onGate?.(payload));
     this.socket.on('pong', (sent: number) => {
       if (typeof sent === 'number') this.rtt = Math.max(1, Date.now() - sent);
     });

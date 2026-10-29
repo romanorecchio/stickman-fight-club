@@ -61,7 +61,7 @@ Full poses are sent at 20 Hz rather than deltas. Eight ragdolls at that rate is 
 
 ## Later: Chaos Control
 
-Not in this phase. When it lands, it is a server-side `OverrideStack` applied at the top of `step`: timed property overrides (gravity, motor scale, friction, hazard spawns) with an id, an expiry, and a cleanup so a round reset cannot leak one. `BalanceParams` is the bag those overrides will wrap. Only an authenticated owner channel may push them. Clients render the result; they do not author it.
+Not in this phase. When it lands, it is a server-side `OverrideStack` applied at the top of `step`: timed property overrides (gravity, motor scale, friction, hazard spawns) with an id, an expiry, and a cleanup so a round reset cannot leak one. `BalanceParams` is the bag those overrides will wrap. Any player in the lobby may push them (Chaos Control is open by design, see `CHAOS_CONTROL.md`); the server still validates and rate-limits every command. Clients render the result; they do not author it.
 
 ## Still later
 

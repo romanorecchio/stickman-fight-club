@@ -606,11 +606,28 @@ function ensureOnline(): void {
   });
 }
 
+// Chaos Control: press O twice quickly (within 400 ms) to toggle the panel. No lock, open to every player.
+let lastO = 0;
+let chaosRequested = false;
 window.addEventListener('keydown', (event) => {
-  if (!event.ctrlKey || !event.shiftKey || event.code !== 'F9') return;
-  event.preventDefault();
+  if (event.code !== 'KeyO' || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+  const target = event.target as HTMLElement | null;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable) return;
+  const now = performance.now();
+  if (now - lastO > 400) {
+    lastO = now;
+    return;
+  }
+  lastO = 0;
   ensureOnline();
-  online?.emit('gate', { account: localStorage.getItem('sfc-account') });
+  if (!chaosRequested) {
+    chaosRequested = true;
+    online?.emit('chaos-open');
+    return;
+  }
+  void import('./owner-panel.js').then((mod) => {
+    if (!mod.togglePanel()) online?.emit('chaos-open');
+  });
 });
 
 function accountToken(): string | undefined {

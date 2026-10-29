@@ -1,4 +1,3 @@
-import { scryptSync, timingSafeEqual } from 'node:crypto';
 import type { PrivateFx } from '@sfc/shared';
 import type { Accounts } from './accounts.js';
 import type { Simulation } from '@sfc/sim';
@@ -84,69 +83,36 @@ const EMPTY_FX: PrivateFx = {
 };
 
 export class ChaosControl {
-  private readonly owners = new Map<string, number>();
-  private readonly unlocked = new Map<string, number>();
-  private readonly fails = new Map<string, { n: number; until: number }>();
-  private readonly stamps: number[] = [];
+  private readonly stamps = new Map<string, number[]>();
   private active: Active[] = [];
   private rng = Math.random;
 
   constructor(private readonly accounts: Accounts | null) {}
 
-  noteOwner(token: string, now = Date.now()): void {
-    this.owners.set(token, now + 30 * 60 * 1000);
-  }
-
-  isOwner(token: unknown, now = Date.now()): boolean {
-    if (typeof token !== 'string') return false;
-    const until = this.owners.get(token) ?? 0;
-    if (until < now) {
-      this.owners.delete(token);
-      this.unlocked.delete(token);
-      return false;
-    }
-    return true;
-  }
-
-  /** Catalog for the lazy panel. Null when the caller is not the owner. */
-  begin(token: unknown, now = Date.now()): { effects: ChaosEffectDef[] } | null {
-    if (!this.isOwner(token, now)) return null;
-    this.accounts?.audit('owner', 'gate', 'open');
+  /** Catalog for the panel. Open to every player: there is no owner gate. */
+  catalog(): { effects: ChaosEffectDef[] } {
     return { effects: CHAOS_EFFECTS };
   }
 
-  submitCode(token: unknown, code: unknown, now = Date.now()): { ok: true } | { error: string } | null {
-    if (!this.isOwner(token, now) || typeof token !== 'string') return null;
-    const fail = this.fails.get(token) ?? { n: 0, until: 0 };
-    if (fail.until > now) {
-      this.accounts?.audit('owner', 'lockout', 'code');
-      return { error: 'Locked. Wait and try again.' };
-    }
-    if (typeof code !== 'string' || !verifyHash(code, process.env.OWNER_CHAOS_CODE_HASH)) {
-      fail.n += 1;
-      if (fail.n >= 5) {
-        fail.until = now + 10 * 60 * 1000;
-        fail.n = 0;
-      }
-      this.fails.set(token, fail);
-      this.accounts?.audit('owner', 'bad-code', 'refused');
-      return { error: 'That code was refused.' };
-    }
-    this.fails.delete(token);
-    this.unlocked.set(token, now + 20 * 60 * 1000);
-    this.accounts?.audit('owner', 'unlock', 'ok');
-    return { ok: true };
+  /** Any player in the room may cast. `actor` is the caster's player id. */
+  cast(actor: string, raw: unknown, roster: string[], now = Date.now()): { ok: true; effect: string } | { error: string } {
+    if (!this.allow(actor, now)) return { error: 'Slow down.' };
+    const body = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+    const effect = typeof body.effect === 'string' ? body.effect.slice(0, 40) : '';
+    if (effect === 'roulette') return this.roll(actor, body, roster, now);
+    if (effect === 'reset') return this.reset(actor);
+    return this.fire(actor, effect, body, roster, now);
   }
 
-  cast(token: unknown, raw: unknown, roster: string[], now = Date.now()): { ok: true } | { error: string } | null {
-    if (!this.live(token, now) || typeof token !== 'string') return null;
-    if (!this.allow(now)) return { error: 'Slow down.' };
-    const body = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-    const effect = typeof body.effect === 'string' ? body.effect : '';
-    if (effect === 'roulette') return this.roll(token, body, roster, now);
-    if (effect === 'reset') return this.reset(token, now);
+  reset(actor: string): { ok: true; effect: string } {
+    this.active = [];
+    this.accounts?.audit(actor, 'reset', 'all');
+    return { ok: true, effect: 'reset' };
+  }
+
+  private fire(actor: string, effect: string, body: Record<string, unknown>, roster: string[], now: number): { ok: true; effect: string } | { error: string } {
     const def = CHAOS_EFFECTS.find((item) => item.id === effect);
-    if (!def) return { error: 'Unknown effect.' };
+    if (!def || effect === 'roulette') return { error: 'Unknown effect.' };
     const targets = this.targets(body.targets, roster);
     if (targets.length === 0) return { error: 'Pick someone in this lobby.' };
     const duration = clampNum(body.duration, 1, 15, 4);
@@ -157,16 +123,10 @@ export class ChaosControl {
       if (!image) return { error: 'Custom jumpscares must be a PNG or JPEG under 400 KB.' };
     }
     if (GRAVITY.has(effect)) this.active = this.active.filter((item) => !GRAVITY.has(item.effect));
+    if (this.active.length >= 64) this.active.shift();
     this.active.push({ effect, targets, until: now + duration * 1000, intensity, image, fired: false, next: now });
-    this.accounts?.audit('owner', effect, targets.join(',').slice(0, 180));
-    return { ok: true };
-  }
-
-  reset(token: unknown, now = Date.now()): { ok: true } | null {
-    if (!this.live(token, now)) return null;
-    this.active = [];
-    this.accounts?.audit('owner', 'reset', 'all');
-    return { ok: true };
+    this.accounts?.audit(actor, effect, targets.join(',').slice(0, 180));
+    return { ok: true, effect };
   }
 
   dismiss(playerId: string): void {
@@ -174,6 +134,7 @@ export class ChaosControl {
   }
 
   dropPlayer(playerId: string): void {
+    this.stamps.delete(playerId);
     for (const item of this.active) item.targets = item.targets.filter((id) => id !== playerId);
     this.active = this.active.filter((item) => item.targets.length > 0);
   }
@@ -254,24 +215,22 @@ export class ChaosControl {
     return fx;
   }
 
-  private roll(token: string, body: Record<string, unknown>, roster: string[], now: number): { ok: true } | { error: string } {
+  private roll(actor: string, body: Record<string, unknown>, roster: string[], now: number): { ok: true; effect: string } | { error: string } {
     const safe = CHAOS_EFFECTS.filter((item) => item.id !== 'roulette' && item.id !== 'custom');
     const pick = safe[Math.floor(this.rng() * safe.length)];
     if (!pick) return { error: 'Nothing to roll.' };
-    return this.cast(token, { ...body, effect: pick.id }, roster, now) ?? { error: 'Not unlocked.' };
+    return this.fire(actor, pick.id, body, roster, now);
   }
 
-  private live(token: unknown, now: number): boolean {
-    if (!this.isOwner(token, now) || typeof token !== 'string') return false;
-    return (this.unlocked.get(token) ?? 0) >= now;
-  }
-
-  private allow(now: number): boolean {
-    const recent = this.stamps.filter((stamp) => now - stamp < 10_000);
-    this.stamps.length = 0;
-    this.stamps.push(...recent);
-    if (this.stamps.length >= 8) return false;
-    this.stamps.push(now);
+  /** At most 8 casts per player per 10 s. */
+  private allow(actor: string, now: number): boolean {
+    const recent = (this.stamps.get(actor) ?? []).filter((stamp) => now - stamp < 10_000);
+    if (recent.length >= 8) {
+      this.stamps.set(actor, recent);
+      return false;
+    }
+    recent.push(now);
+    this.stamps.set(actor, recent);
     return true;
   }
 
@@ -281,23 +240,6 @@ export class ChaosControl {
     const ids = raw.filter((id): id is string => typeof id === 'string' && roster.includes(id));
     return [...new Set(ids)].slice(0, 8);
   }
-}
-
-export function ownerPasswordMatches(username: unknown, password: unknown): boolean {
-  const expected = process.env.OWNER_USERNAME;
-  if (!expected || typeof username !== 'string' || username !== expected) return false;
-  if (typeof password !== 'string') return false;
-  return verifyHash(password, process.env.OWNER_PASSWORD_HASH);
-}
-
-function verifyHash(secret: string, stored: string | undefined): boolean {
-  if (!stored) return false;
-  const [kind, salt, hash] = stored.split('$');
-  if (kind !== 'scrypt' || !salt || !hash) return false;
-  const next = scryptSync(secret, salt, 32);
-  const prev = Buffer.from(hash, 'hex');
-  if (next.length !== prev.length) return false;
-  return timingSafeEqual(next, prev);
 }
 
 function clampNum(value: unknown, min: number, max: number, fallback: number): number {

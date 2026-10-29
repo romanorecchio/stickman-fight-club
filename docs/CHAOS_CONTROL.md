@@ -1,15 +1,14 @@
-# Stickman Fight Club — Secret Owner Chaos Control System (from Roman)
+# Stickman Fight Club — Chaos Control (from Roman)
 
-## Access & security (build FIRST)
-- Open with Ctrl+Shift+F9, AND require an authenticated owner account, AND a secret code validated on the backend.
-- Nothing hardcoded in the frontend. Credentials in env vars or stored hashed (e.g. OWNER_USERNAME, OWNER_PASSWORD_HASH, OWNER_CHAOS_CODE_HASH).
-- Every privileged WebSocket command is verified server-side (owner session check per command).
-- Rate-limit / lock out failed attempts. Owner sessions expire.
-- Private server-side audit log of every privileged action.
-- Never reveal to other players who the owner is or that the panel exists (no client bundle strings that expose it beyond the generic key listener; panel UI can be lazy-loaded after auth).
+## Access & security## Access (open to everyone, by Roman's choice)
+- No lock. Any player presses **O twice quickly** (two O keydowns within ~400 ms; ignored while typing in a text field) to toggle the panel. Esc closes it.
+- There is no owner sign-in, secret code, or Ctrl+Shift+F9 flow any more. Anyone with the link can open the panel and use every effect. This was a deliberate owner decision (Oct 2026).
+- The server accepts chaos commands from any player connected to a lobby, and only against players in that same lobby. Each lobby has its own effect manager.
+- Kept server-side: input validation (unknown effects, bad targets, and malformed bodies are refused, never thrown), a rate limit of 8 casts per player per 10 s, and the private audit log (`chaos_audit`, actor = player id).
+- Socket events: `chaos-open` → `chaos-catalog`; `chaos` / `chaos-reset` → `chaos-result` (`{ ok, effect }` or `{ error }`).
+- `OWNER_USERNAME` / `OWNER_PASSWORD_HASH` still let Roman sign in to his normal profile; they grant nothing extra. `OWNER_CHAOS_CODE_HASH` is unused.
 
-## Panel
-Black and red styling, six tabs: Players, Jumpscares, Physics, Visuals/Fake Events, Weapons, Chaos Roulette. Big RESET ALL button. Target a single player, several, or all.
+ed styling, six tabs: Players, Jumpscares, Physics, Visuals/Fake Events, Weapons, Chaos Roulette. Big RESET ALL button. Target a single player, several, or all.
 
 ## 30 effects
 Jumpscares: Nightmare Face, Goofy Screamer, Fake Crash Jumpscare, Custom Jumpscare (owner upload, validated type/size, sanitized).

@@ -152,6 +152,33 @@ describe('socket rooms', () => {
   });
 });
 
+describe('chaos over sockets', () => {
+  it('lets a plain guest open the catalog and hit another player, and shrugs off junk', async () => {
+    const server = await startServer({ port: 0, graceMs: 2_000, corsOrigin: '*' });
+    servers.push(server);
+    const caster = await connect(server.port);
+    const victim = await connect(server.port);
+    const created = await emitWelcome(caster, 'create', { username: 'Ada' });
+    const joined = await emitWelcome(victim, 'join', { username: 'Bea', code: created.code });
+    const catalog = await new Promise<{ effects: unknown[] }>((resolve) => {
+      caster.once('chaos-catalog', resolve);
+      caster.emit('chaos-open');
+    });
+    expect(catalog.effects).toHaveLength(30);
+    const victimSnaps = collect(victim);
+    const results: unknown[] = [];
+    caster.on('chaos-result', (body) => results.push(body));
+    caster.emit('chaos', 'junk');
+    caster.emit('chaos', { effect: 'victory', targets: [joined.playerId], duration: 3 });
+    await delay(400);
+    expect(results).toContainEqual({ error: 'Unknown effect.' });
+    expect(results).toContainEqual({ ok: true, effect: 'victory' });
+    expect(victimSnaps.some((snap) => snap.fx?.banner === 'YOU WIN')).toBe(true);
+    caster.close();
+    victim.close();
+  });
+});
+
 function seq(started: number): number {
   return Math.max(1, Math.round((Date.now() - started) / 16));
 }

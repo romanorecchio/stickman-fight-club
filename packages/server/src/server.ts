@@ -3,8 +3,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { Server } from 'socket.io';
 import type { LobbyState, NetSnapshot, RoomError, Welcome } from '@sfc/shared';
-import { Accounts } from './accounts.js';
-import { ownerPasswordMatches } from './chaos.js';
+import { Accounts, ownerPasswordMatches } from './accounts.js';
 import { MatchDirectory, type Joined } from './rooms.js';
 
 export interface ListenOptions {
@@ -140,29 +139,33 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
     });
     socket.on('login', (body: { username?: string; password?: string }) => {
       if (accounts && ownerPasswordMatches(body?.username, body?.password)) {
-        const minted = accounts.loginOwner(body?.username);
-        if ('token' in minted) directory.noteOwner(minted.token);
-        accountResult(minted);
+        accountResult(accounts.loginOwner(body?.username));
         return;
       }
       accountResult(accounts ? accounts.login(body?.username, body?.password) : { error: 'Accounts are off.' });
     });
-    socket.on('gate', (body: { account?: string }) => {
-      const opened = directory.gate(body?.account);
-      if (opened) socket.emit('gate-open', opened);
+    socket.on('chaos-open', () => {
+      socket.emit('chaos-catalog', directory.chaosCatalog());
     });
-    socket.on('gate-code', (body: { account?: string; code?: string }) => {
-      const result = directory.gateCode(body?.account, body?.code);
-      if (result) socket.emit('gate-code', result);
+    socket.on('chaos', (body: unknown) => {
+      if (!token) {
+        socket.emit('chaos-result', { error: 'Join a lobby first.' });
+        return;
+      }
+      try {
+        socket.emit('chaos-result', directory.chaosCast(token, body) ?? { error: 'Join a lobby first.' });
+      } catch (error) {
+        console.error('chaos command failed', error);
+        socket.emit('chaos-result', { error: 'That did not work.' });
+      }
     });
-    socket.on('chaos', (body: { account?: string } & Record<string, unknown>) => {
+    socket.on('chaos-reset', () => {
       if (!token) return;
-      const result = directory.chaosCast(token, body?.account, body);
-      if (result && 'error' in result) socket.emit('gate-code', result);
-    });
-    socket.on('chaos-reset', (body: { account?: string }) => {
-      if (!token) return;
-      directory.chaosReset(token, body?.account);
+      try {
+        socket.emit('chaos-result', directory.chaosReset(token) ?? { error: 'Join a lobby first.' });
+      } catch (error) {
+        console.error('chaos reset failed', error);
+      }
     });
     socket.on('dismiss-scare', () => {
       if (!token) return;

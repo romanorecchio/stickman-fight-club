@@ -22,7 +22,7 @@ PORT=4318 STATIC_DIR=packages/client/dist npm start
 | `SFC_DELAY_MS` | Test-only delay. Leave unset in production. |
 | `OWNER_USERNAME` | Owner account name. Never put this in frontend code. |
 | `OWNER_PASSWORD_HASH` | `scrypt$salt$hash` from the hash script below. |
-| `OWNER_CHAOS_CODE_HASH` | Same format, for the second factor. |
+| `OWNER_CHAOS_CODE_HASH` | Unused. Chaos Control has no lock (see `docs/CHAOS_CONTROL.md`). |
 | `VITE_SERVER_URL` | Only if the page is hosted somewhere else. Set it before `npm run build`. Leave unset when Node serves the page. |
 
 `deploy/Caddyfile` is the manual TLS option: it proxies `example.com` to `127.0.0.1:4318`.

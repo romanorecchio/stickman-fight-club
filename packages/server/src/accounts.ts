@@ -331,3 +331,21 @@ function toProfile(row: UserRow): Profile {
     loadout: { color: row.color, hat: row.hat, face: row.face },
   };
 }
+
+/**
+ * Env-configured login for the OWNER_USERNAME account (its stored password is random).
+ * This only signs Roman into his normal profile; it grants nothing extra.
+ */
+export function ownerPasswordMatches(username: unknown, password: unknown): boolean {
+  const expected = process.env.OWNER_USERNAME;
+  if (!expected || typeof username !== 'string' || username !== expected) return false;
+  if (typeof password !== 'string') return false;
+  const stored = process.env.OWNER_PASSWORD_HASH;
+  if (!stored) return false;
+  const [kind, salt, hash] = stored.split('$');
+  if (kind !== 'scrypt' || !salt || !hash) return false;
+  const next = scryptSync(password, salt, 32);
+  const prev = Buffer.from(hash, 'hex');
+  if (next.length !== prev.length) return false;
+  return timingSafeEqual(next, prev);
+}

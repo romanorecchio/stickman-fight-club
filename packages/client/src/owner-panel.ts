@@ -7,7 +7,13 @@ interface EffectRow {
 }
 
 let panel: HTMLElement | null = null;
-let unlocked = false;
+
+/** Show or hide the panel. Returns false when it has not been built yet. */
+export function togglePanel(): boolean {
+  if (!panel) return false;
+  panel.hidden = !panel.hidden;
+  return true;
+}
 
 export function openPanel(session: OnlineSession, effects: EffectRow[]): void {
   if (panel) {
@@ -17,13 +23,9 @@ export function openPanel(session: OnlineSession, effects: EffectRow[]): void {
   panel = document.createElement('section');
   panel.id = 'owner-panel';
   panel.innerHTML = `
-    <header><strong>Owner</strong><button type="button" data-close>Close</button></header>
-    <form data-code>
-      <label>Code <input name="code" type="password" autocomplete="off" /></label>
-      <button type="submit">Unlock</button>
-      <p data-msg></p>
-    </form>
-    <div data-tools hidden>
+    <header><strong>Chaos Control</strong><button type="button" data-close>Close</button></header>
+    <p data-msg></p>
+    <div data-tools>
       <div data-tabs></div>
       <div data-list></div>
       <label>Seconds <input data-seconds type="number" min="1" max="15" value="4" /></label>
@@ -37,7 +39,7 @@ export function openPanel(session: OnlineSession, effects: EffectRow[]): void {
   style.textContent = `
     #owner-panel { position: fixed; right: 16px; bottom: 16px; z-index: 6; width: min(360px, calc(100% - 24px)); background: #100608; color: #f3ecdf; border: 1px solid #ff5d3a; padding: 12px; display: grid; gap: 8px; font: 14px "DejaVu Sans", sans-serif; }
     #owner-panel[hidden], #owner-panel [hidden] { display: none; }
-    #owner-panel header, #owner-panel form, #owner-panel [data-tools] { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    #owner-panel header, #owner-panel [data-tools] { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     #owner-panel button, #owner-panel input { font: inherit; background: #1a0c10; color: inherit; border: 1px solid #ff5d3a; padding: 4px 8px; }
     #owner-panel [data-list] { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; max-height: 40vh; overflow: auto; }
   `;
@@ -45,21 +47,13 @@ export function openPanel(session: OnlineSession, effects: EffectRow[]): void {
   panel.querySelector('[data-close]')?.addEventListener('click', () => {
     if (panel) panel.hidden = true;
   });
-  panel.querySelector('[data-code]')?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const code = new FormData(event.target as HTMLFormElement).get('code');
-    session.emit('gate-code', { account: localStorage.getItem('sfc-account'), code });
+  window.addEventListener('keydown', (event) => {
+    if (event.code === 'Escape' && panel && !panel.hidden) panel.hidden = true;
   });
-  session.listen('gate-code', (body) => {
+  session.listen('chaos-result', (body) => {
     const msg = panel?.querySelector('[data-msg]');
-    const result = body as { ok?: boolean; error?: string };
-    if (result.ok) {
-      unlocked = true;
-      const tools = panel?.querySelector<HTMLElement>('[data-tools]');
-      const form = panel?.querySelector<HTMLElement>('[data-code]');
-      if (tools) tools.hidden = false;
-      if (form) form.hidden = true;
-    } else if (msg) msg.textContent = result.error ?? '';
+    const result = body as { ok?: boolean; effect?: string; error?: string };
+    if (msg) msg.textContent = result.ok ? `Sent: ${result.effect ?? ''}` : (result.error ?? '');
   });
   const tabs = [...new Set(effects.map((effect) => effect.tab))];
   const tabBar = panel.querySelector('[data-tabs]');
@@ -73,14 +67,12 @@ export function openPanel(session: OnlineSession, effects: EffectRow[]): void {
       button.type = 'button';
       button.textContent = effect.name;
       button.addEventListener('click', () => {
-        if (!unlocked) return;
         const send = (image?: string) => {
           const seconds = Number(panel?.querySelector<HTMLInputElement>('[data-seconds]')?.value ?? 4);
           const intensity = Number(panel?.querySelector<HTMLInputElement>('[data-intensity]')?.value ?? 70);
           const who = panel?.querySelector<HTMLInputElement>('[data-targets]')?.value ?? 'all';
           const targets = who.trim() === 'all' ? 'all' : who.split(',').map((id) => id.trim()).filter(Boolean);
           session.emit('chaos', {
-            account: localStorage.getItem('sfc-account'),
             effect: effect.id,
             duration: seconds,
             intensity,
@@ -121,6 +113,6 @@ export function openPanel(session: OnlineSession, effects: EffectRow[]): void {
   }
   draw();
   panel.querySelector('[data-reset]')?.addEventListener('click', () => {
-    session.emit('chaos-reset', { account: localStorage.getItem('sfc-account') });
+    session.emit('chaos-reset');
   });
 }
