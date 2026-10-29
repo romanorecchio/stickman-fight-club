@@ -141,15 +141,9 @@
     </div>
     <section id="gate" class="gate">
       <form id="gate-form">
-        <p class="eyebrow">Online or offline</p>
+        <p class="eyebrow">Pick a name and fight</p>
         <h2>Enter the club</h2>
         <label>Name <input id="name" name="name" maxlength="16" autocomplete="nickname" required /></label>
-        <label>Password <input id="password" name="password" type="password" minlength="8" autocomplete="current-password" /></label>
-        <div class="gate-row">
-          <button type="button" id="login-btn">Log in</button>
-          <button type="button" id="register-btn">Create account</button>
-        </div>
-        <p id="account-line" class="join-url">Guest play works without an account. Accounts keep stats.</p>
         <label>Hat
           <select id="hat-select">
             <option value="none">Bare head</option>
@@ -169,11 +163,6 @@
           </select>
         </label>
         <label>Color <input id="color-select" type="number" min="0" max="7" value="0" /></label>
-        <div class="gate-row">
-          <button type="button" id="equip-btn">Save look</button>
-          <button type="button" id="stats-btn">Stats</button>
-        </div>
-        <pre id="stats-panel" class="scoreboard" hidden></pre>
         <div class="gate-row">
           <button type="button" id="create-btn">Create lobby</button>
           <button type="button" id="train-btn">Training room</button>

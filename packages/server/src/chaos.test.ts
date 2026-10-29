@@ -1,21 +1,10 @@
-import { randomBytes, scryptSync } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '@sfc/sim';
-import { Accounts, ownerPasswordMatches } from './accounts.js';
 import { CHAOS_EFFECTS, ChaosControl } from './chaos.js';
-
-function hash(secret: string): string {
-  const salt = randomBytes(8).toString('hex');
-  return `scrypt$${salt}$${scryptSync(secret, salt, 32).toString('hex')}`;
-}
 
 describe('chaos control', () => {
   it('lets any player in the room cast, rate-limits per player, and audits', () => {
-    const accounts = new Accounts(path.join(mkdtempSync(path.join(tmpdir(), 'sfc-chaos-')), 'a.sqlite'));
-    const chaos = new ChaosControl(accounts);
+    const chaos = new ChaosControl();
     expect(chaos.catalog().effects).toHaveLength(30);
     expect(chaos.cast('p1', { effect: 'yeet', targets: 'all' }, ['p1', 'p2'], 1_000)).toEqual({ ok: true, effect: 'yeet' });
     expect(chaos.cast('p1', { effect: 'nope', targets: 'all' }, ['p1'], 1_001)).toEqual({ error: 'Unknown effect.' });
@@ -27,20 +16,12 @@ describe('chaos control', () => {
     expect(chaos.cast('p2', { effect: 'tiny', targets: 'all' }, ['p1', 'p2'], 1_020)).toEqual({ ok: true, effect: 'tiny' });
     expect(chaos.cast('p1', { effect: 'tiny', targets: 'all' }, ['p1'], 12_000)).toEqual({ ok: true, effect: 'tiny' });
     expect(chaos.reset('p2')).toEqual({ ok: true, effect: 'reset' });
-    expect(accounts.recentAudit().some((row) => row.action === 'yeet')).toBe(true);
+    expect(chaos.recentAudit().some((row) => row.action === 'yeet')).toBe(true);
     expect(CHAOS_EFFECTS.map((effect) => effect.id)).toContain('roulette');
   });
 
-  it('keeps the env owner login only as a normal profile login', () => {
-    process.env.OWNER_USERNAME = 'Roman';
-    process.env.OWNER_PASSWORD_HASH = hash('owner-pass-99');
-    expect(ownerPasswordMatches('Roman', 'nope')).toBe(false);
-    expect(ownerPasswordMatches('Roman', 'owner-pass-99')).toBe(true);
-    expect(ownerPasswordMatches('Ada', 'owner-pass-99')).toBe(false);
-  });
-
   it('yeets without NaNs, skips an opted-out jumpscare, and lets reverse gravity replace zero gravity', () => {
-    const chaos = new ChaosControl(null);
+    const chaos = new ChaosControl();
     const sim = new Simulation({ roster: 'empty', ai: false, seed: 3, spawnProtect: 0 });
     sim.addFighter('p1', 'Ada', 0);
     expect(chaos.cast('p2', { effect: 'zero-gravity', targets: 'all', duration: 4 }, ['p1'], 5_000)).toMatchObject({ ok: true });

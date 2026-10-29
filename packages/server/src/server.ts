@@ -3,7 +3,6 @@ import { createServer, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { Server } from 'socket.io';
 import type { LobbyState, NetSnapshot, RoomError, Welcome } from '@sfc/shared';
-import { Accounts, ownerPasswordMatches } from './accounts.js';
 import { MatchDirectory, type Joined } from './rooms.js';
 
 export interface ListenOptions {
@@ -42,13 +41,8 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
     if (delayMs <= 0) fn();
     else setTimeout(fn, delayMs);
   };
-  let accounts: Accounts | null = null;
-  try {
-    accounts = new Accounts();
-  } catch (error) {
-    console.error('accounts database unavailable', error);
-  }
-  const directory = new MatchDirectory({ graceMs, accounts: accounts ?? undefined });
+  // No accounts, no database: every socket is a guest identified by the name it picks.
+  const directory = new MatchDirectory({ graceMs });
   const http = createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -77,8 +71,8 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
       const lobby = directory.lobby(code);
       if (lobby) io.to(code).emit('lobby', lobby satisfies LobbyState);
     };
-    socket.on('create', (body: { username?: string; account?: string }) => {
-      const result = directory.create(body?.username, body?.account);
+    socket.on('create', (body: { username?: string; look?: unknown }) => {
+      const result = directory.create(body?.username, lookOf(body));
       if (isError(result)) {
         socket.emit('problem', result);
         return;
@@ -88,8 +82,8 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
       socket.emit('welcome', result.welcome satisfies Welcome);
       pushLobby(result.welcome.code);
     });
-    socket.on('join', (body: { username?: string; code?: string; account?: string }) => {
-      const result = directory.join(body?.code, body?.username, body?.account);
+    socket.on('join', (body: { username?: string; code?: string; look?: unknown }) => {
+      const result = directory.join(body?.code, body?.username, lookOf(body));
       if (isError(result)) {
         socket.emit('problem', result);
         return;
@@ -131,19 +125,6 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
       if (problem) socket.emit('problem', problem);
       else if (code) pushLobby(code);
     });
-    const accountResult = (result: { error: string } | { token?: string; profile?: unknown } | { ok: true } | null) => {
-      socket.emit('account', result ?? { error: 'Accounts are off.' });
-    };
-    socket.on('register', (body: { username?: string; password?: string }) => {
-      accountResult(accounts ? accounts.register(body?.username, body?.password) : { error: 'Accounts are off.' });
-    });
-    socket.on('login', (body: { username?: string; password?: string }) => {
-      if (accounts && ownerPasswordMatches(body?.username, body?.password)) {
-        accountResult(accounts.loginOwner(body?.username));
-        return;
-      }
-      accountResult(accounts ? accounts.login(body?.username, body?.password) : { error: 'Accounts are off.' });
-    });
     socket.on('chaos-open', () => {
       socket.emit('chaos-catalog', directory.chaosCatalog());
     });
@@ -170,21 +151,6 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
     socket.on('dismiss-scare', () => {
       if (!token) return;
       directory.dismissScare(token);
-    });
-    socket.on('logout', (body: { token?: string }) => {
-      accounts?.logout(body?.token);
-      socket.emit('account', { profile: null });
-    });
-    socket.on('equip', (body: { token?: string; loadout?: unknown }) => {
-      const result = directory.equip(body?.token, body?.loadout);
-      if ('error' in result) accountResult(result);
-      else accountResult(accounts?.profile(body?.token) ? { profile: accounts.profile(body?.token) } : { error: 'Log in first.' });
-    });
-    socket.on('profile', (body: { token?: string }) => {
-      accountResult({ profile: accounts?.profile(body?.token) ?? null });
-    });
-    socket.on('leaderboard', () => {
-      socket.emit('board', accounts?.leaderboard() ?? []);
     });
     socket.on('prefs', (body: unknown) => {
       if (!token) return;
@@ -232,6 +198,11 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
         http.close(() => done());
       }),
   };
+}
+
+function lookOf(body: unknown): object | undefined {
+  const look = body && typeof body === 'object' ? (body as { look?: unknown }).look : undefined;
+  return look && typeof look === 'object' ? look : undefined;
 }
 
 function isError(value: Joined | RoomError): value is RoomError {

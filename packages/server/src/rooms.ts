@@ -9,6 +9,7 @@ import {
   allowInput,
   emptyInput,
   sanitizeInput,
+  sanitizeLoadout,
   sanitizeUsername,
   type InputFrame,
   type LobbyState,
@@ -20,7 +21,6 @@ import {
 } from '@sfc/shared';
 import { MatchRules, type Loadout, type TeamId } from '@sfc/shared';
 import { Simulation } from '@sfc/sim';
-import type { Accounts } from './accounts.js';
 import { CHAOS_EFFECTS, ChaosControl } from './chaos.js';
 
 export interface Joined {
@@ -31,7 +31,6 @@ export interface Joined {
 export interface RoomOptions {
   graceMs?: number;
   maxPlayers?: number;
-  accounts?: Accounts;
 }
 
 interface Slot {
@@ -45,7 +44,6 @@ interface Slot {
   lastInput: InputFrame;
   lastSeq: number;
   inputStamps: number[];
-  userId: number | null;
   hat: string;
   face: string;
   prefs: { jumpscares: boolean; reduceMotion: boolean; reduceFlash: boolean };
@@ -58,7 +56,6 @@ interface Room {
   mapId: string;
   hostId: string;
   startedAt: number;
-  statsSaved: boolean;
   history: Snapshot[];
   deathsSeen: number;
   chaos: ChaosControl;
@@ -79,12 +76,10 @@ export class MatchDirectory {
   private replayListener: ((code: string, frames: Snapshot[]) => void) | null = null;
   private readonly graceMs: number;
   private readonly maxPlayers: number;
-  private readonly accounts: Accounts | null;
 
   constructor(options: RoomOptions = {}) {
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.maxPlayers = options.maxPlayers ?? MAX_PLAYERS;
-    this.accounts = options.accounts ?? null;
   }
 
   onSnapshot(listener: (code: string, snap: NetSnapshot) => void): void {
@@ -152,10 +147,11 @@ export class MatchDirectory {
     this.timer = null;
   }
 
-  create(rawName: unknown, rawAccount?: unknown, now = Date.now()): Joined | RoomError {
-    const clock = typeof rawAccount === 'number' ? rawAccount : now;
-    const account = typeof rawAccount === 'number' ? undefined : rawAccount;
-    const who = this.named(rawName, account);
+  /** Every player is a guest: a display name plus an optional look picked in the menu. */
+  create(rawName: unknown, rawLook?: unknown, now = Date.now()): Joined | RoomError {
+    const clock = typeof rawLook === 'number' ? rawLook : now;
+    const look = typeof rawLook === 'number' ? undefined : rawLook;
+    const who = this.named(rawName, look);
     if (!who) return { code: 'name', message: 'Enter a name first.' };
     const code = this.freshCode();
     const room = this.blankRoom(code, clock);
@@ -163,10 +159,10 @@ export class MatchDirectory {
     return this.takeSlot(room, who, clock);
   }
 
-  join(rawCode: unknown, rawName: unknown, rawAccount?: unknown, now = Date.now()): Joined | RoomError {
-    const clock = typeof rawAccount === 'number' ? rawAccount : now;
-    const account = typeof rawAccount === 'number' ? undefined : rawAccount;
-    const who = this.named(rawName, account);
+  join(rawCode: unknown, rawName: unknown, rawLook?: unknown, now = Date.now()): Joined | RoomError {
+    const clock = typeof rawLook === 'number' ? rawLook : now;
+    const look = typeof rawLook === 'number' ? undefined : rawLook;
+    const who = this.named(rawName, look);
     if (!who) return { code: 'name', message: 'Enter a name first.' };
     const code = normalizeCode(rawCode);
     if (!code) return { code: 'not_found', message: 'Room codes are 6 characters.' };
@@ -267,7 +263,6 @@ export class MatchDirectory {
     room.sim.deployWeapons(room.match.settings.weapons, room.match.settings.categories);
     room.sim.resetTallies();
     room.startedAt = Date.now();
-    room.statsSaved = false;
     return null;
   }
 
@@ -362,10 +357,6 @@ export class MatchDirectory {
           }),
           now,
         );
-        if (room.match.phase === 'matchEnd' && !room.statsSaved) {
-          room.statsSaved = true;
-          this.saveStats(room);
-        }
         room.acc -= FIXED_DT;
         steps += 1;
         if (room.sim.tick % SNAPSHOT_STRIDE === 0) {
@@ -424,37 +415,15 @@ export class MatchDirectory {
     room.hostId = next?.id ?? '';
   }
 
-  private named(rawName: unknown, rawAccount: unknown): { name: string; userId: number | null; loadout: Loadout | null } | null {
-    const userId = this.accounts?.userId(rawAccount) ?? null;
-    if (userId !== null && this.accounts) {
-      const profile = this.accounts.profile(rawAccount);
-      if (!profile) return null;
-      return { name: profile.username, userId, loadout: profile.loadout };
-    }
+  private named(rawName: unknown, rawLook: unknown): { name: string; loadout: Loadout | null } | null {
     const name = sanitizeUsername(rawName);
     if (!name) return null;
-    return { name, userId: null, loadout: null };
+    // No accounts or levels: every hat, face, and color is open to everyone.
+    const loadout = rawLook ? sanitizeLoadout(rawLook, 99) : null;
+    return { name, loadout };
   }
 
-  equip(accountToken: unknown, raw: unknown): { error: string } | { ok: true } {
-    if (!this.accounts) return { error: 'Accounts are not available.' };
-    const result = this.accounts.equip(accountToken, raw);
-    if ('error' in result) return result;
-    const userId = this.accounts.userId(accountToken);
-    if (userId === null) return { error: 'Log in first.' };
-    for (const room of this.rooms.values()) {
-      for (const slot of room.slots.values()) {
-        if (slot.userId !== userId) continue;
-        slot.color = result.profile.loadout.color;
-        slot.hat = result.profile.loadout.hat;
-        slot.face = result.profile.loadout.face;
-        room.sim.setLook(slot.id, result.profile.loadout);
-      }
-    }
-    return { ok: true };
-  }
-
-  private takeSlot(room: Room, who: { name: string; userId: number | null; loadout: Loadout | null }, now: number): Joined {
+  private takeSlot(room: Room, who: { name: string; loadout: Loadout | null }, now: number): Joined {
     const id = `p${randomBytes(4).toString('hex')}`;
     const token = randomBytes(24).toString('base64url');
     const color = who.loadout?.color ?? room.joinCounter % 8;
@@ -469,7 +438,6 @@ export class MatchDirectory {
       lastInput: emptyInput(0, color % 2 === 0 ? 1 : -1, 0),
       lastSeq: 0,
       inputStamps: [],
-      userId: who.userId,
       hat: who.loadout?.hat ?? 'none',
       face: who.loadout?.face ?? 'dot',
       prefs: { jumpscares: true, reduceMotion: false, reduceFlash: false },
@@ -521,34 +489,6 @@ export class MatchDirectory {
     };
   }
 
-  private saveStats(room: Room): void {
-    if (!this.accounts) return;
-    const view = room.match.view();
-    const seconds = Math.max(0, (Date.now() - room.startedAt) / 1000);
-    this.accounts.record(
-      [...room.slots.values()].flatMap((slot) => {
-        if (slot.userId === null) return [];
-        const row = view.rows.find((item) => item.id === slot.id);
-        const tallies = room.sim.tallies(slot.id);
-        const won = view.winnerId === slot.id;
-        const idle = (row?.kills ?? 0) + (row?.deaths ?? 0) + (row?.score ?? 0) + tallies.dealt < 1;
-        return [{
-          userId: slot.userId,
-          won,
-          kills: row?.kills ?? 0,
-          deaths: row?.deaths ?? 0,
-          damageDealt: tallies.dealt,
-          damageTaken: tallies.taken,
-          playSeconds: seconds,
-          kothPoints: room.match.settings.mode === 'koth' ? (row?.score ?? 0) : 0,
-          infectionWin: room.match.settings.mode === 'infection' && won && room.match.infected.has(slot.id),
-          duelWin: room.match.settings.mode === 'duel' && won,
-          idle,
-        }];
-      }),
-    );
-  }
-
   private occupants(room: Room): number {
     return room.slots.size;
   }
@@ -561,10 +501,9 @@ export class MatchDirectory {
       mapId: 'classic',
       hostId: '',
       startedAt: now,
-      statsSaved: false,
       history: [],
       deathsSeen: 0,
-      chaos: new ChaosControl(this.accounts),
+      chaos: new ChaosControl(),
       chaosPhase: 'lobby',
       chaosBanner: false,
       fx: new Map(),

@@ -63,6 +63,10 @@ Full poses are sent at 20 Hz rather than deltas. Eight ragdolls at that rate is 
 
 Not in this phase. When it lands, it is a server-side `OverrideStack` applied at the top of `step`: timed property overrides (gravity, motor scale, friction, hazard spawns) with an id, an expiry, and a cleanup so a round reset cannot leak one. `BalanceParams` is the bag those overrides will wrap. Any player in the lobby may push them (Chaos Control is open by design, see `CHAOS_CONTROL.md`); the server still validates and rate-limits every command. Clients render the result; they do not author it.
 
+## Players are guests
+
+There are no accounts. A socket sends `create` or `join` with `{ username, look? }`; the server sanitizes the name and the hat/face/color and gives that socket a slot plus a reconnect token. Nothing is stored on disk: no SQLite, no sessions, no XP. The client keeps the name and look in `localStorage` (`sfc-name`, `sfc-look`).
+
 ## Still later
 
-Accounts, weapons, the six-map list, and match modes. The arena is still one room: floor, three platforms, walls, and a crate. Deployment config is in `docs/DEPLOY.md`; running it on a public host is an operator step, not something this repo does by itself.
+Weapons, the six-map list, and match modes. The arena is still one room: floor, three platforms, walls, and a crate. Deployment config is in `docs/DEPLOY.md`; running it on a public host is an operator step, not something this repo does by itself.

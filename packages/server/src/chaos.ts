@@ -1,5 +1,4 @@
 import type { PrivateFx } from '@sfc/shared';
-import type { Accounts } from './accounts.js';
 import type { Simulation } from '@sfc/sim';
 
 export interface ChaosEffectDef {
@@ -87,7 +86,17 @@ export class ChaosControl {
   private active: Active[] = [];
   private rng = Math.random;
 
-  constructor(private readonly accounts: Accounts | null) {}
+  /** Small in-memory log of recent casts (no database). */
+  private readonly log: { at: number; actor: string; action: string; detail: string }[] = [];
+
+  private audit(actor: string, action: string, detail: string): void {
+    this.log.push({ at: Date.now(), actor: actor.slice(0, 32), action: action.slice(0, 80), detail: detail.slice(0, 180) });
+    if (this.log.length > 200) this.log.shift();
+  }
+
+  recentAudit(limit = 20): { action: string; detail: string }[] {
+    return this.log.slice(-limit).reverse().map(({ action, detail }) => ({ action, detail }));
+  }
 
   /** Catalog for the panel. Open to every player: there is no owner gate. */
   catalog(): { effects: ChaosEffectDef[] } {
@@ -106,7 +115,7 @@ export class ChaosControl {
 
   reset(actor: string): { ok: true; effect: string } {
     this.active = [];
-    this.accounts?.audit(actor, 'reset', 'all');
+    this.audit(actor, 'reset', 'all');
     return { ok: true, effect: 'reset' };
   }
 
@@ -125,7 +134,7 @@ export class ChaosControl {
     if (GRAVITY.has(effect)) this.active = this.active.filter((item) => !GRAVITY.has(item.effect));
     if (this.active.length >= 64) this.active.shift();
     this.active.push({ effect, targets, until: now + duration * 1000, intensity, image, fired: false, next: now });
-    this.accounts?.audit(actor, effect, targets.join(',').slice(0, 180));
+    this.audit(actor, effect, targets.join(',').slice(0, 180));
     return { ok: true, effect };
   }
 

@@ -2,7 +2,7 @@ import { DEFAULT_BALANCE, FIXED_DT, sanitizeBalance, type BalanceParams, type Fi
 import { Simulation } from '@sfc/sim';
 import { isMuted, playEffect, setMuted, setVolume } from './audio.js';
 import { buildInput, consumePress, installInput, pointer } from './input.js';
-import { OnlineSession, type AccountProfile, type BoardRow } from './net.js';
+import { OnlineSession, type Look } from './net.js';
 import { createCamera, drawFrame, interpolate, updateCamera, worldPoint, type View } from './render.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -477,36 +477,25 @@ function bindGate(): void {
   const codeInput = document.querySelector<HTMLInputElement>('#code');
   const nameInput = document.querySelector<HTMLInputElement>('#name');
   if (codeInput && params.get('room')) codeInput.value = params.get('room') ?? '';
-  if (nameInput) nameInput.value = sessionStorage.getItem('sfc-name') ?? '';
+  if (nameInput) {
+    nameInput.value = savedName();
+    nameInput.addEventListener('change', () => {
+      const next = nameInput.value.trim().slice(0, 16);
+      if (next) localStorage.setItem(NAME_KEY, next);
+    });
+  }
+  const look = savedLook();
+  const color = document.querySelector<HTMLInputElement>('#color-select');
+  const hat = document.querySelector<HTMLSelectElement>('#hat-select');
+  const face = document.querySelector<HTMLSelectElement>('#face-select');
+  if (color) color.value = String(look.color);
+  if (hat) hat.value = look.hat;
+  if (face) face.value = look.face;
+  for (const input of [color, hat, face]) input?.addEventListener('change', () => localStorage.setItem(LOOK_KEY, JSON.stringify(readLook())));
   document.querySelector('#train-btn')?.addEventListener('click', () => {
     const dummyOn = document.querySelector<HTMLInputElement>('#dummy-toggle')?.checked ?? true;
     sim.setDummyEnabled(dummyOn);
     enterTraining();
-  });
-  const auth = (kind: 'login' | 'register') => {
-    ensureOnline();
-    online?.emit(kind, {
-      username: document.querySelector<HTMLInputElement>('#name')?.value ?? '',
-      password: document.querySelector<HTMLInputElement>('#password')?.value ?? '',
-    });
-  };
-  document.querySelector('#login-btn')?.addEventListener('click', () => auth('login'));
-  document.querySelector('#register-btn')?.addEventListener('click', () => auth('register'));
-  document.querySelector('#equip-btn')?.addEventListener('click', () => {
-    ensureOnline();
-    online?.emit('equip', {
-      token: accountToken(),
-      loadout: {
-        color: Number(document.querySelector<HTMLInputElement>('#color-select')?.value ?? 0),
-        hat: document.querySelector<HTMLSelectElement>('#hat-select')?.value ?? 'none',
-        face: document.querySelector<HTMLSelectElement>('#face-select')?.value ?? 'dot',
-      },
-    });
-  });
-  document.querySelector('#stats-btn')?.addEventListener('click', () => {
-    ensureOnline();
-    online?.emit('profile', { token: accountToken() });
-    online?.emit('leaderboard');
   });
   document.querySelector('#create-btn')?.addEventListener('click', () => openOnline('create'));
   document.querySelector('#join-btn')?.addEventListener('click', () => openOnline('join'));
@@ -536,10 +525,6 @@ function bindGate(): void {
     ensureOnline();
     online?.reconnect(saved);
   }
-  if (accountToken()) {
-    ensureOnline();
-    online?.emit('profile', { token: accountToken() });
-  }
 }
 
 function readSettings(): Record<string, unknown> {
@@ -568,12 +553,19 @@ function readSettings(): Record<string, unknown> {
 }
 
 function openOnline(kind: 'create' | 'join'): void {
-  const name = document.querySelector<HTMLInputElement>('#name')?.value ?? '';
+  const nameInput = document.querySelector<HTMLInputElement>('#name');
+  let name = (nameInput?.value ?? '').trim().slice(0, 16);
+  if (!name) {
+    name = randomName();
+    if (nameInput) nameInput.value = name;
+  }
+  localStorage.setItem(NAME_KEY, name);
   const code = document.querySelector<HTMLInputElement>('#code')?.value ?? '';
-  sessionStorage.setItem('sfc-name', name);
+  const look = readLook();
+  localStorage.setItem(LOOK_KEY, JSON.stringify(look));
   ensureOnline();
-  if (kind === 'create') online?.create(name, accountToken());
-  else online?.join(name, code, accountToken());
+  if (kind === 'create') online?.create(name, look);
+  else online?.join(name, code, look);
 }
 
 function ensureOnline(): void {
@@ -590,8 +582,6 @@ function ensureOnline(): void {
     onLobby: (lobby) => renderLobby(lobby),
     onProblem: (problem) => showProblem(problem.message),
     onLeft: () => showGate(),
-    onAccount: showAccount,
-    onBoard: showBoard,
     onReplay: (frames) => {
       if (frames.length < 2) return;
       replay = frames;
@@ -630,40 +620,45 @@ window.addEventListener('keydown', (event) => {
   });
 });
 
-function accountToken(): string | undefined {
-  return localStorage.getItem('sfc-account') || undefined;
+const NAME_KEY = 'sfc-name';
+const LOOK_KEY = 'sfc-look';
+const NAME_A = ['Swift', 'Wobbly', 'Mighty', 'Sneaky', 'Spicy', 'Rowdy', 'Tiny', 'Lucky', 'Cranky', 'Bouncy'];
+const NAME_B = ['Stick', 'Noodle', 'Brawler', 'Kicker', 'Puncher', 'Ninja', 'Goblin', 'Twig', 'Bruiser', 'Pogo'];
+
+function randomName(): string {
+  const pick = (list: string[]) => list[Math.floor(Math.random() * list.length)] ?? list[0]!;
+  return `${pick(NAME_A)}${pick(NAME_B)}${Math.floor(Math.random() * 90) + 10}`.slice(0, 16);
 }
 
-function showAccount(payload: { error?: string; token?: string; profile?: AccountProfile | null }): void {
-  const line = document.querySelector('#account-line');
-  if (payload.token) localStorage.setItem('sfc-account', payload.token);
-  if (payload.error) {
-    if (line) line.textContent = payload.error;
-    return;
-  }
-  if (payload.profile) {
-    if (line) line.textContent = `${payload.profile.username} · level ${payload.profile.level} · ${payload.profile.wins}W ${payload.profile.kills}K · ${payload.profile.xp} xp`;
-    const name = document.querySelector<HTMLInputElement>('#name');
-    const color = document.querySelector<HTMLInputElement>('#color-select');
-    const hat = document.querySelector<HTMLSelectElement>('#hat-select');
-    const face = document.querySelector<HTMLSelectElement>('#face-select');
-    if (name) name.value = payload.profile.username;
-    if (color) color.value = String(payload.profile.loadout.color);
-    if (hat) hat.value = payload.profile.loadout.hat;
-    if (face) face.value = payload.profile.loadout.face;
-  } else if (payload.profile === null) {
-    localStorage.removeItem('sfc-account');
-    if (line) line.textContent = 'Playing as a guest.';
+/** Display name for this browser: the last one used, or a fresh random one saved right away. */
+function savedName(): string {
+  const stored = (localStorage.getItem(NAME_KEY) ?? '').trim();
+  if (stored) return stored.slice(0, 16);
+  const fresh = randomName();
+  localStorage.setItem(NAME_KEY, fresh);
+  return fresh;
+}
+
+function savedLook(): Look {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LOOK_KEY) ?? '{}') as Partial<Look>;
+    return {
+      color: Number.isFinite(Number(raw.color)) ? Math.max(0, Math.min(7, Math.round(Number(raw.color)))) : 0,
+      hat: typeof raw.hat === 'string' ? raw.hat : 'none',
+      face: typeof raw.face === 'string' ? raw.face : 'dot',
+    };
+  } catch {
+    return { color: 0, hat: 'none', face: 'dot' };
   }
 }
 
-function showBoard(rows: BoardRow[]): void {
-  const panel = document.querySelector<HTMLElement>('#stats-panel');
-  if (!panel) return;
-  panel.hidden = false;
-  panel.textContent = rows.length
-    ? rows.map((row) => `${row.username}  L${row.level}  ${row.xp} xp  ${row.wins} wins  ${row.kills} kills`).join('\n')
-    : 'No ranked fighters yet.';
+function readLook(): Look {
+  const color = Number(document.querySelector<HTMLInputElement>('#color-select')?.value ?? 0);
+  return {
+    color: Number.isFinite(color) ? Math.max(0, Math.min(7, Math.round(color))) : 0,
+    hat: document.querySelector<HTMLSelectElement>('#hat-select')?.value ?? 'none',
+    face: document.querySelector<HTMLSelectElement>('#face-select')?.value ?? 'dot',
+  };
 }
 
 function renderLobby(lobby: { code: string; hostId: string; chaosBanner?: boolean; settings?: { mode?: string; map?: string }; players: { id: string; name: string; host: boolean; connected: boolean; team?: string }[] }): void {

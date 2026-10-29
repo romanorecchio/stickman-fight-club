@@ -1,12 +1,12 @@
 # Stickman Fight Club — Chaos Control (from Roman)
 
-## Access & security## Access (open to everyone, by Roman's choice)
+## Access (open to everyone, by Roman's choice)
 - No lock. Any player presses **O twice quickly** (two O keydowns within ~400 ms; ignored while typing in a text field) to toggle the panel. Esc closes it.
-- There is no owner sign-in, secret code, or Ctrl+Shift+F9 flow any more. Anyone with the link can open the panel and use every effect. This was a deliberate owner decision (Oct 2026).
+- There are no accounts at all, so no owner sign-in, secret code, or Ctrl+Shift+F9 flow. Anyone with the link can open the panel and use every effect. This was a deliberate owner decision (Oct 2026).
 - The server accepts chaos commands from any player connected to a lobby, and only against players in that same lobby. Each lobby has its own effect manager.
-- Kept server-side: input validation (unknown effects, bad targets, and malformed bodies are refused, never thrown), a rate limit of 8 casts per player per 10 s, and the private audit log (`chaos_audit`, actor = player id).
+- Kept server-side: input validation (unknown effects, bad targets, and malformed bodies are refused, never thrown), a rate limit of 8 casts per player per 10 s, and a small in-memory audit log of recent casts (actor = player id; no database, gone on restart).
 - Socket events: `chaos-open` → `chaos-catalog`; `chaos` / `chaos-reset` → `chaos-result` (`{ ok, effect }` or `{ error }`).
-- `OWNER_USERNAME` / `OWNER_PASSWORD_HASH` still let Roman sign in to his normal profile; they grant nothing extra. `OWNER_CHAOS_CODE_HASH` is unused.
+- `OWNER_USERNAME`, `OWNER_PASSWORD_HASH`, and `OWNER_CHAOS_CODE_HASH` are unused; the server never reads them.
 
 ed styling, six tabs: Players, Jumpscares, Physics, Visuals/Fake Events, Weapons, Chaos Roulette. Big RESET ALL button. Target a single player, several, or all.
 

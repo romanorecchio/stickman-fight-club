@@ -25,6 +25,16 @@ describe('lobby rules', () => {
     expect(missing).toMatchObject({ code: 'not_found' });
   });
 
+  it('lets guests pick any look with just a name, and ignores a bad look', () => {
+    const directory = new MatchDirectory();
+    const host = directory.create('Ada', { color: 6, hat: 'halo', face: 'shades' }, 1_000);
+    if (!('welcome' in host)) throw new Error('create');
+    expect(host.welcome.lobby.players[0]).toMatchObject({ name: 'Ada', color: 6 });
+    const guest = directory.join(host.welcome.code, 'Bea', { color: 99, hat: 'jetpack' }, 1_000);
+    if (!('welcome' in guest)) throw new Error('join');
+    expect(guest.welcome.lobby.players.map((p) => p.name)).toEqual(['Ada', 'Bea']);
+  });
+
   it('caps a room at 8, isolates a second room, and keeps spawns apart', () => {
     const directory = new MatchDirectory();
     const now = 5_000;
@@ -153,6 +163,23 @@ describe('socket rooms', () => {
 });
 
 describe('chaos over sockets', () => {
+  it('has no account endpoints: old login/register events get no reply and play still works', async () => {
+    const server = await startServer({ port: 0, graceMs: 2_000, corsOrigin: '*' });
+    servers.push(server);
+    const socket = await connect(server.port);
+    const replies: string[] = [];
+    socket.onAny((event) => replies.push(event));
+    socket.emit('login', { username: 'Ada', password: 'whatever-123' });
+    socket.emit('register', { username: 'Ada', password: 'whatever-123' });
+    socket.emit('profile', {});
+    socket.emit('leaderboard');
+    await delay(200);
+    expect(replies.filter((event) => event !== 'pong')).toEqual([]);
+    const created = await emitWelcome(socket, 'create', { username: 'Ada' });
+    expect(created.code).toHaveLength(6);
+    socket.close();
+  });
+
   it('lets a plain guest open the catalog and hit another player, and shrugs off junk', async () => {
     const server = await startServer({ port: 0, graceMs: 2_000, corsOrigin: '*' });
     servers.push(server);

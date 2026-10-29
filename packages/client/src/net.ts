@@ -7,30 +7,14 @@ export interface OnlineHooks {
   onLobby: (lobby: LobbyState) => void;
   onProblem: (problem: RoomError) => void;
   onLeft: () => void;
-  onAccount?: (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => void;
-  onBoard?: (rows: BoardRow[]) => void;
   onReplay?: (frames: Snapshot[]) => void;
   onGate?: (payload: { effects: { id: string; name: string; tab: string }[] }) => void;
 }
 
-export interface AccountProfile {
-  username: string;
-  xp: number;
-  level: number;
-  matches: number;
-  wins: number;
-  losses: number;
-  kills: number;
-  deaths: number;
-  loadout: { color: number; hat: string; face: string };
-}
-
-export interface BoardRow {
-  username: string;
-  level: number;
-  xp: number;
-  wins: number;
-  kills: number;
+export interface Look {
+  color: number;
+  hat: string;
+  face: string;
 }
 
 export class OnlineSession {
@@ -70,8 +54,6 @@ export class OnlineSession {
     });
     this.socket.on('problem', (problem: RoomError) => this.hooks.onProblem(problem));
     this.socket.on('left', () => this.hooks.onLeft());
-    this.socket.on('account', (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => this.hooks.onAccount?.(payload));
-    this.socket.on('board', (rows: BoardRow[]) => this.hooks.onBoard?.(rows));
     this.socket.on('replay', (frames: Snapshot[]) => this.hooks.onReplay?.(frames));
     this.socket.on('chaos-catalog', (payload: { effects: { id: string; name: string; tab: string }[] }) => this.hooks.onGate?.(payload));
     this.socket.on('pong', (sent: number) => {
@@ -80,14 +62,14 @@ export class OnlineSession {
     this.pingTimer = setInterval(() => this.socket?.emit('ping', Date.now()), 1000);
   }
 
-  create(username: string, account?: string): void {
+  create(username: string, look?: Look): void {
     this.connect();
-    this.socket?.emit('create', { username, account });
+    this.socket?.emit('create', { username, look });
   }
 
-  join(username: string, code: string, account?: string): void {
+  join(username: string, code: string, look?: Look): void {
     this.connect();
-    this.socket?.emit('join', { username, code, account });
+    this.socket?.emit('join', { username, code, look });
   }
 
   reconnect(token: string): void {

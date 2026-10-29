@@ -9,5 +9,3 @@ services:
         value: production
       - key: STATIC_DIR
         value: packages/client/dist
-      - key: SFC_DB
-        value: /tmp/accounts.sqlite
