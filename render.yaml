@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: stickman-fight-club
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: STATIC_DIR
+        value: packages/client/dist
+      - key: SFC_DB
+        value: /tmp/accounts.sqlite
