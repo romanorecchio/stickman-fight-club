@@ -321,6 +321,7 @@ function drawFighter(
     ctx.arc(head.x, head.y, headR, 0, Math.PI * 2);
     ctx.fill();
     drawFace(ctx, fighter, head, headR);
+    drawHat(ctx, fighter, head, headR);
     stroke(ctx, [pt('shoulder'), pt('elbowF'), pt('wristF')], width + 6, look.ink);
     stroke(ctx, [pt('shoulder'), pt('elbowF'), pt('wristF')], width + 1, bone);
     stroke(ctx, [pt('hip'), pt('kneeF'), pt('ankleF')], width + 6, look.ink);
@@ -353,6 +354,35 @@ function drawFighter(
   ctx.restore();
 }
 
+function drawHat(ctx: CanvasRenderingContext2D, fighter: FighterSnapshot, head: Vec2, radius: number): void {
+  ctx.save();
+  ctx.strokeStyle = '#f3ecdf';
+  ctx.fillStyle = '#e7b15a';
+  ctx.lineWidth = 2;
+  if (fighter.hat === 'cap' || fighter.hat === 'beanie') {
+    ctx.beginPath();
+    ctx.arc(head.x, head.y - radius * 0.15, radius * 0.95, Math.PI, 0);
+    ctx.fill();
+    if (fighter.hat === 'cap') ctx.fillRect(head.x, head.y - radius * 0.2, fighter.facing * radius * 1.3, radius * 0.18);
+  } else if (fighter.hat === 'crown') {
+    ctx.beginPath();
+    ctx.moveTo(head.x - radius, head.y - radius * 0.2);
+    ctx.lineTo(head.x - radius * 0.55, head.y - radius * 1.15);
+    ctx.lineTo(head.x, head.y - radius * 0.35);
+    ctx.lineTo(head.x + radius * 0.55, head.y - radius * 1.15);
+    ctx.lineTo(head.x + radius, head.y - radius * 0.2);
+    ctx.fill();
+  } else if (fighter.hat === 'halo') {
+    ctx.beginPath();
+    ctx.ellipse(head.x, head.y - radius * 1.25, radius * 0.7, radius * 0.22, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (fighter.hat === 'glasses') {
+    ctx.strokeRect(head.x - radius * 0.55, head.y - radius * 0.15, radius * 0.42, radius * 0.28);
+    ctx.strokeRect(head.x + radius * 0.12, head.y - radius * 0.15, radius * 0.42, radius * 0.28);
+  }
+  ctx.restore();
+}
+
 function drawFace(ctx: CanvasRenderingContext2D, fighter: FighterSnapshot, head: Vec2, radius: number): void {
   const c = Math.cos(fighter.headAngle);
   const s = Math.sin(fighter.headAngle);
@@ -362,6 +392,14 @@ function drawFace(ctx: CanvasRenderingContext2D, fighter: FighterSnapshot, head:
   });
   const eye = local(fighter.facing * 0.28, 0.12);
   ctx.fillStyle = '#1a1210';
+  if (fighter.face === 'smile' || fighter.face === 'mad') {
+    ctx.beginPath();
+    ctx.strokeStyle = '#1a1210';
+    ctx.lineWidth = 2;
+    const mouth = local(fighter.facing * 0.05, -0.35);
+    ctx.arc(mouth.x, mouth.y, radius * 0.28, fighter.face === 'mad' ? Math.PI + 0.4 : 0.3, fighter.face === 'mad' ? -0.4 : Math.PI - 0.3);
+    ctx.stroke();
+  }
   if (fighter.state === 'ko' || fighter.state === 'fallen') {
     ctx.strokeStyle = '#1a1210';
     ctx.lineWidth = 2;

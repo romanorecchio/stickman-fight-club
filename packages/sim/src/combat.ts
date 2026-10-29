@@ -278,6 +278,8 @@ function connect(
   if (damage > 0.4) {
     victim.lastHurtBy = attacker.id;
     victim.hp = Math.max(0, victim.hp - damage);
+    attacker.dealt += damage;
+    victim.taken += damage;
     ctx.hitsLanded.n += 1;
     ctx.effects.push({
       kind: blocked ? 'block' : 'hit',

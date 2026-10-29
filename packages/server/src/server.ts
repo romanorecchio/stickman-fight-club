@@ -3,6 +3,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { Server } from 'socket.io';
 import type { LobbyState, NetSnapshot, RoomError, Welcome } from '@sfc/shared';
+import { Accounts } from './accounts.js';
 import { MatchDirectory, type Joined } from './rooms.js';
 
 export interface ListenOptions {
@@ -41,7 +42,13 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
     if (delayMs <= 0) fn();
     else setTimeout(fn, delayMs);
   };
-  const directory = new MatchDirectory({ graceMs });
+  let accounts: Accounts | null = null;
+  try {
+    accounts = new Accounts();
+  } catch (error) {
+    console.error('accounts database unavailable', error);
+  }
+  const directory = new MatchDirectory({ graceMs, accounts: accounts ?? undefined });
   const http = createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -67,8 +74,8 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
       const lobby = directory.lobby(code);
       if (lobby) io.to(code).emit('lobby', lobby satisfies LobbyState);
     };
-    socket.on('create', (body: { username?: string }) => {
-      const result = directory.create(body?.username);
+    socket.on('create', (body: { username?: string; account?: string }) => {
+      const result = directory.create(body?.username, body?.account);
       if (isError(result)) {
         socket.emit('problem', result);
         return;
@@ -78,8 +85,8 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
       socket.emit('welcome', result.welcome satisfies Welcome);
       pushLobby(result.welcome.code);
     });
-    socket.on('join', (body: { username?: string; code?: string }) => {
-      const result = directory.join(body?.code, body?.username);
+    socket.on('join', (body: { username?: string; code?: string; account?: string }) => {
+      const result = directory.join(body?.code, body?.username, body?.account);
       if (isError(result)) {
         socket.emit('problem', result);
         return;
@@ -120,6 +127,30 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
       const problem = directory.startMatch(token);
       if (problem) socket.emit('problem', problem);
       else if (code) pushLobby(code);
+    });
+    const accountResult = (result: { error: string } | { token?: string; profile?: unknown } | { ok: true } | null) => {
+      socket.emit('account', result ?? { error: 'Accounts are off.' });
+    };
+    socket.on('register', (body: { username?: string; password?: string }) => {
+      accountResult(accounts ? accounts.register(body?.username, body?.password) : { error: 'Accounts are off.' });
+    });
+    socket.on('login', (body: { username?: string; password?: string }) => {
+      accountResult(accounts ? accounts.login(body?.username, body?.password) : { error: 'Accounts are off.' });
+    });
+    socket.on('logout', (body: { token?: string }) => {
+      accounts?.logout(body?.token);
+      socket.emit('account', { profile: null });
+    });
+    socket.on('equip', (body: { token?: string; loadout?: unknown }) => {
+      const result = directory.equip(body?.token, body?.loadout);
+      if ('error' in result) accountResult(result);
+      else accountResult(accounts?.profile(body?.token) ? { profile: accounts.profile(body?.token) } : { error: 'Log in first.' });
+    });
+    socket.on('profile', (body: { token?: string }) => {
+      accountResult({ profile: accounts?.profile(body?.token) ?? null });
+    });
+    socket.on('leaderboard', () => {
+      socket.emit('board', accounts?.leaderboard() ?? []);
     });
     socket.on('team', (body: { team?: 'red' | 'blue' | 'none' }) => {
       if (!token) return;

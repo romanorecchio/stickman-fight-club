@@ -518,6 +518,7 @@ function hurt(host: ArsenalHost, attacker: Fighter, victim: Fighter, damage: num
     if (ta && ta === tb) return;
   }
   if (victim.spawnProtect > 0 || victim.state === 'ko') return;
+  const before = victim.hp;
   const origin = attacker.bodies.torso.getPosition();
   const p = victim.bodies.torso.getPosition();
   let dx = p.x - origin.x;
@@ -526,6 +527,7 @@ function hurt(host: ArsenalHost, attacker: Fighter, victim: Fighter, damage: num
   dx /= n;
   dy /= n;
   applyRaw(victim, damage, dx, dy, knock);
+  attacker.dealt += Math.max(0, before - victim.hp);
   victim.lastHurtBy = attacker.id;
   host.effect({ kind: 'text', x, y: y + 0.25, mag: damage, text: String(Math.round(Math.min(HIT_CAP, damage))) });
 }
@@ -537,6 +539,7 @@ function applyRaw(victim: Fighter, damage: number, dx: number, dy: number, knock
   const blocked = victim.blocking || shield?.id === 'shield';
   const dealt = blocked ? amount * (shield?.id === 'shield' ? 0.35 : 0.55) : amount;
   victim.hp = Math.max(0, victim.hp - dealt);
+  victim.taken += dealt;
   const impulse = Math.min(26, 10 + knock * 8) * (blocked ? 0.45 : 1);
   const torso = victim.bodies.torso;
   torso.applyLinearImpulse({ x: dx * impulse, y: Math.max(0.1, dy) * impulse * 0.65 }, torso.getWorldCenter(), true);

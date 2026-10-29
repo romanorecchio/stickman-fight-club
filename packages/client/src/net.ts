@@ -7,6 +7,28 @@ export interface OnlineHooks {
   onLobby: (lobby: LobbyState) => void;
   onProblem: (problem: RoomError) => void;
   onLeft: () => void;
+  onAccount?: (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => void;
+  onBoard?: (rows: BoardRow[]) => void;
+}
+
+export interface AccountProfile {
+  username: string;
+  xp: number;
+  level: number;
+  matches: number;
+  wins: number;
+  losses: number;
+  kills: number;
+  deaths: number;
+  loadout: { color: number; hat: string; face: string };
+}
+
+export interface BoardRow {
+  username: string;
+  level: number;
+  xp: number;
+  wins: number;
+  kills: number;
 }
 
 export class OnlineSession {
@@ -46,20 +68,22 @@ export class OnlineSession {
     });
     this.socket.on('problem', (problem: RoomError) => this.hooks.onProblem(problem));
     this.socket.on('left', () => this.hooks.onLeft());
+    this.socket.on('account', (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => this.hooks.onAccount?.(payload));
+    this.socket.on('board', (rows: BoardRow[]) => this.hooks.onBoard?.(rows));
     this.socket.on('pong', (sent: number) => {
       if (typeof sent === 'number') this.rtt = Math.max(1, Date.now() - sent);
     });
     this.pingTimer = setInterval(() => this.socket?.emit('ping', Date.now()), 1000);
   }
 
-  create(username: string): void {
+  create(username: string, account?: string): void {
     this.connect();
-    this.socket?.emit('create', { username });
+    this.socket?.emit('create', { username, account });
   }
 
-  join(username: string, code: string): void {
+  join(username: string, code: string, account?: string): void {
     this.connect();
-    this.socket?.emit('join', { username, code });
+    this.socket?.emit('join', { username, code, account });
   }
 
   reconnect(token: string): void {

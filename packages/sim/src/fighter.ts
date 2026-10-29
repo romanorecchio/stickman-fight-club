@@ -97,7 +97,11 @@ export class Fighter {
   infected = false;
   moveScale = 1;
   maxHp = 100;
-  readonly color: number;
+  color: number;
+  hat = 'none';
+  face = 'dot';
+  dealt = 0;
+  taken = 0;
 
   constructor(
     world: World,
@@ -112,6 +116,8 @@ export class Fighter {
     this.id = id;
     this.name = name;
     this.color = color;
+    this.hat = 'none';
+    this.face = 'dot';
     this.facing = facing;
     this.spawnX = x;
     this.spawnProtect = spawnProtect;

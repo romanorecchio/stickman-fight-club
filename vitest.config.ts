@@ -5,10 +5,12 @@ import { defineConfig } from 'vitest/config';
 const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  ssr: { external: ['node:sqlite'] },
   test: {
     environment: 'node',
     include: ['packages/sim/src/**/*.test.ts', 'packages/server/src/**/*.test.ts'],
     testTimeout: 30000,
+    server: { deps: { external: ['node:sqlite'] } },
   },
   resolve: {
     alias: {

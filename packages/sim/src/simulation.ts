@@ -393,6 +393,26 @@ export class Simulation {
     if (fighter) equipWeapon(fighter, weapon);
   }
 
+  setLook(id: string, look: { color: number; hat: string; face: string }): void {
+    const fighter = this.fighters.get(id);
+    if (!fighter) return;
+    fighter.color = look.color;
+    fighter.hat = look.hat;
+    fighter.face = look.face;
+  }
+
+  tallies(id: string): { dealt: number; taken: number } {
+    const fighter = this.fighters.get(id);
+    return { dealt: fighter?.dealt ?? 0, taken: fighter?.taken ?? 0 };
+  }
+
+  resetTallies(): void {
+    for (const fighter of this.fighters.values()) {
+      fighter.dealt = 0;
+      fighter.taken = 0;
+    }
+  }
+
   markInfected(ids: ReadonlySet<string>): void {
     for (const fighter of this.fighters.values()) {
       fighter.infected = ids.has(fighter.id);
@@ -656,6 +676,8 @@ export class Simulation {
       ammo: f.ammo,
       reserve: f.reserve,
       infected: f.infected,
+      hat: f.hat,
+      face: f.face,
       parts: PARTS.map((part) => poseOf(f.bodies[part], part)),
       points: pointsOf(f),
     };

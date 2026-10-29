@@ -61,6 +61,8 @@ export interface FighterSnapshot {
   ammo: number;
   reserve: number;
   infected: boolean;
+  hat: string;
+  face: string;
   parts: PartPose[];
   points: Record<PointName, Vec2>;
 }

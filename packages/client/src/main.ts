@@ -2,7 +2,7 @@ import { DEFAULT_BALANCE, FIXED_DT, sanitizeBalance, type BalanceParams, type Fi
 import { Simulation } from '@sfc/sim';
 import { isMuted, playEffect, setMuted } from './audio.js';
 import { buildInput, consumePress, installInput, pointer } from './input.js';
-import { OnlineSession } from './net.js';
+import { OnlineSession, type AccountProfile, type BoardRow } from './net.js';
 import { createCamera, drawFrame, interpolate, updateCamera, worldPoint, type View } from './render.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -125,6 +125,8 @@ function blendLocal(predicted: FighterSnapshot, server: FighterSnapshot): Fighte
     ammo: server.ammo,
     reserve: server.reserve,
     infected: server.infected,
+    hat: server.hat,
+    face: server.face,
   };
 }
 
@@ -381,6 +383,31 @@ function bindGate(): void {
     sim.setDummyEnabled(dummyOn);
     enterTraining();
   });
+  const auth = (kind: 'login' | 'register') => {
+    ensureOnline();
+    online?.emit(kind, {
+      username: document.querySelector<HTMLInputElement>('#name')?.value ?? '',
+      password: document.querySelector<HTMLInputElement>('#password')?.value ?? '',
+    });
+  };
+  document.querySelector('#login-btn')?.addEventListener('click', () => auth('login'));
+  document.querySelector('#register-btn')?.addEventListener('click', () => auth('register'));
+  document.querySelector('#equip-btn')?.addEventListener('click', () => {
+    ensureOnline();
+    online?.emit('equip', {
+      token: accountToken(),
+      loadout: {
+        color: Number(document.querySelector<HTMLInputElement>('#color-select')?.value ?? 0),
+        hat: document.querySelector<HTMLSelectElement>('#hat-select')?.value ?? 'none',
+        face: document.querySelector<HTMLSelectElement>('#face-select')?.value ?? 'dot',
+      },
+    });
+  });
+  document.querySelector('#stats-btn')?.addEventListener('click', () => {
+    ensureOnline();
+    online?.emit('profile', { token: accountToken() });
+    online?.emit('leaderboard');
+  });
   document.querySelector('#create-btn')?.addEventListener('click', () => openOnline('create'));
   document.querySelector('#join-btn')?.addEventListener('click', () => openOnline('join'));
   document.querySelector('#leave-btn')?.addEventListener('click', () => {
@@ -408,6 +435,10 @@ function bindGate(): void {
   if (saved) {
     ensureOnline();
     online?.reconnect(saved);
+  }
+  if (accountToken()) {
+    ensureOnline();
+    online?.emit('profile', { token: accountToken() });
   }
 }
 
@@ -440,8 +471,8 @@ function openOnline(kind: 'create' | 'join'): void {
   const code = document.querySelector<HTMLInputElement>('#code')?.value ?? '';
   sessionStorage.setItem('sfc-name', name);
   ensureOnline();
-  if (kind === 'create') online?.create(name);
-  else online?.join(name, code);
+  if (kind === 'create') online?.create(name, accountToken());
+  else online?.join(name, code, accountToken());
 }
 
 function ensureOnline(): void {
@@ -458,7 +489,45 @@ function ensureOnline(): void {
     onLobby: (lobby) => renderLobby(lobby),
     onProblem: (problem) => showProblem(problem.message),
     onLeft: () => showGate(),
+    onAccount: showAccount,
+    onBoard: showBoard,
   });
+}
+
+function accountToken(): string | undefined {
+  return localStorage.getItem('sfc-account') || undefined;
+}
+
+function showAccount(payload: { error?: string; token?: string; profile?: AccountProfile | null }): void {
+  const line = document.querySelector('#account-line');
+  if (payload.token) localStorage.setItem('sfc-account', payload.token);
+  if (payload.error) {
+    if (line) line.textContent = payload.error;
+    return;
+  }
+  if (payload.profile) {
+    if (line) line.textContent = `${payload.profile.username} · level ${payload.profile.level} · ${payload.profile.wins}W ${payload.profile.kills}K · ${payload.profile.xp} xp`;
+    const name = document.querySelector<HTMLInputElement>('#name');
+    const color = document.querySelector<HTMLInputElement>('#color-select');
+    const hat = document.querySelector<HTMLSelectElement>('#hat-select');
+    const face = document.querySelector<HTMLSelectElement>('#face-select');
+    if (name) name.value = payload.profile.username;
+    if (color) color.value = String(payload.profile.loadout.color);
+    if (hat) hat.value = payload.profile.loadout.hat;
+    if (face) face.value = payload.profile.loadout.face;
+  } else if (payload.profile === null) {
+    localStorage.removeItem('sfc-account');
+    if (line) line.textContent = 'Playing as a guest.';
+  }
+}
+
+function showBoard(rows: BoardRow[]): void {
+  const panel = document.querySelector<HTMLElement>('#stats-panel');
+  if (!panel) return;
+  panel.hidden = false;
+  panel.textContent = rows.length
+    ? rows.map((row) => `${row.username}  L${row.level}  ${row.xp} xp  ${row.wins} wins  ${row.kills} kills`).join('\n')
+    : 'No ranked fighters yet.';
 }
 
 function renderLobby(lobby: { code: string; hostId: string; settings?: { mode?: string; map?: string }; players: { id: string; name: string; host: boolean; connected: boolean; team?: string }[] }): void {

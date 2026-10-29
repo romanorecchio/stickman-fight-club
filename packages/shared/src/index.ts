@@ -6,3 +6,4 @@ export * from './net.js';
 export * from './match.js';
 export * from './weapons.js';
 export * from './maps.js';
+export * from './cosmetics.js';
