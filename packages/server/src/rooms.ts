@@ -16,6 +16,7 @@ import {
   type RoomError,
   type Welcome,
 } from '@sfc/shared';
+import { MatchRules, type TeamId } from '@sfc/shared';
 import { Simulation } from '@sfc/sim';
 
 export interface Joined {
@@ -44,6 +45,7 @@ interface Slot {
 interface Room {
   code: string;
   sim: Simulation;
+  match: MatchRules;
   hostId: string;
   slots: Map<string, Slot>;
   joinCounter: number;
@@ -165,6 +167,51 @@ export class MatchDirectory {
     return this.rooms.size;
   }
 
+  updateSettings(token: string, raw: unknown): RoomError | null {
+    const room = this.roomFor(token);
+    const slot = this.slotFor(token);
+    if (!room || !slot) return { code: 'token', message: 'You are not in a lobby.' };
+    if (room.hostId !== slot.id) return { code: 'closed', message: 'Only the host can change settings.' };
+    room.match.queueSettings(raw);
+    return null;
+  }
+
+  startMatch(token: string): RoomError | null {
+    const room = this.roomFor(token);
+    const slot = this.slotFor(token);
+    if (!room || !slot) return { code: 'token', message: 'You are not in a lobby.' };
+    if (room.hostId !== slot.id) return { code: 'closed', message: 'Only the host can start.' };
+    const roster = [...room.slots.values()].filter((item) => item.connected).map((item) => ({ id: item.id, name: item.name }));
+    const problem = room.match.start(roster);
+    if (problem) return { code: 'closed', message: problem };
+    for (const item of roster) {
+      room.sim.setFighterHp(item.id, room.match.settings.startingHp);
+      room.sim.respawnFighter(item.id);
+    }
+    return null;
+  }
+
+  assignTeam(token: string, team: TeamId): RoomError | null {
+    const room = this.roomFor(token);
+    const slot = this.slotFor(token);
+    if (!room || !slot) return { code: 'token', message: 'You are not in a lobby.' };
+    if (room.hostId !== slot.id && room.match.settings.mode === 'tdm') room.match.setTeam(slot.id, team);
+    else if (room.hostId === slot.id) room.match.setTeam(slot.id, team);
+    else room.match.setTeam(slot.id, team);
+    return null;
+  }
+
+  private roomFor(token: string): Room | null {
+    const found = this.tokens.get(token);
+    return found ? (this.rooms.get(found.code) ?? null) : null;
+  }
+
+  private slotFor(token: string): Slot | null {
+    const found = this.tokens.get(token);
+    const room = found ? this.rooms.get(found.code) : null;
+    return found && room ? (room.slots.get(found.id) ?? null) : null;
+  }
+
   pump(now: number): NetSnapshot[] {
     const emitted: NetSnapshot[] = [];
     for (const room of [...this.rooms.values()]) {
@@ -179,8 +226,24 @@ export class MatchDirectory {
       let steps = 0;
       while (room.acc >= FIXED_DT && steps < 5) {
         const inputs = new Map<string, InputFrame>();
-        for (const slot of room.slots.values()) inputs.set(slot.id, slot.lastInput);
+        for (const slot of room.slots.values()) {
+          const watching = room.match.spectators.has(slot.id) && room.match.phase !== 'lobby';
+          inputs.set(slot.id, watching ? emptyInput(slot.lastSeq, slot.lastInput.aimX, slot.lastInput.aimY) : slot.lastInput);
+        }
         room.sim.stepAll(FIXED_DT, inputs);
+        const roster = room.sim.summaries();
+        for (const row of roster) {
+          const by = room.sim.hurtBy(row.id);
+          if (by) room.match.noteAttacker(row.id, by);
+        }
+        const action = room.match.tick(FIXED_DT, roster);
+        room.sim.setRules(room.match.teams, room.match.settings.friendlyFire);
+        for (const id of action.hold) room.sim.setHoldKo(id, true);
+        for (const id of action.respawn) {
+          room.sim.setHoldKo(id, false);
+          room.sim.setFighterHp(id, room.match.settings.startingHp);
+          room.sim.respawnFighter(id);
+        }
         room.acc -= FIXED_DT;
         steps += 1;
         if (room.sim.tick % SNAPSHOT_STRIDE === 0) {
@@ -198,7 +261,7 @@ export class MatchDirectory {
 
   private snapshotFor(room: Room, slot: Slot, now: number): NetSnapshot {
     const snap = room.sim.getSnapshot(slot.id);
-    return { ...snap, you: slot.id, ackSeq: slot.lastSeq, serverNow: now };
+    return { ...snap, you: slot.id, ackSeq: slot.lastSeq, serverNow: now, match: room.match.view() };
   }
 
   private expire(room: Room, now: number): void {
@@ -215,6 +278,7 @@ export class MatchDirectory {
     this.tokens.delete(slot.token);
     room.slots.delete(id);
     room.sim.removeFighter(id);
+    room.match.remove(id);
     if (room.hostId === id) this.migrateHost(room);
     if (room.slots.size === 0) this.rooms.delete(room.code);
   }
@@ -266,6 +330,8 @@ export class MatchDirectory {
       code: room.code,
       hostId: room.hostId,
       maxPlayers: this.maxPlayers,
+      settings: room.match.settings,
+      phase: room.match.phase,
       players: [...room.slots.values()]
         .sort((a, b) => a.joinIndex - b.joinIndex)
         .map((slot) => ({
@@ -286,6 +352,7 @@ export class MatchDirectory {
     return {
       code,
       sim: new Simulation({ roster: 'empty', ai: false, seed: randomInt(1, 1_000_000) }),
+      match: new MatchRules(),
       hostId: '',
       slots: new Map(),
       joinCounter: 0,

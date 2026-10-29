@@ -18,6 +18,7 @@
       <div id="roster" class="bars" aria-live="polite"></div>
       <p id="stats" class="stats">FPS —</p>
       <p id="banner" class="banner" hidden></p>
+      <pre id="scoreboard" class="scoreboard" hidden></pre>
       <div class="dock">
         <p class="controls">
           <kbd>A</kbd><kbd>D</kbd> move
@@ -44,6 +45,20 @@
           <p id="join-url" class="join-url"></p>
           <button type="button" id="copy-btn">Copy join link</button>
           <ul id="lobby-list"></ul>
+          <div id="host-settings" class="host-settings" hidden>
+            <label>Mode
+              <select id="mode-select">
+                <option value="ffa">Free-for-all</option>
+                <option value="tdm">Team deathmatch</option>
+                <option value="duel">Duels</option>
+              </select>
+            </label>
+            <label>Seconds <input id="round-seconds" type="number" min="20" max="600" value="90" /></label>
+            <label>Score <input id="score-limit" type="number" min="1" max="100" value="10" /></label>
+            <label class="check"><input id="elimination" type="checkbox" /> Elimination</label>
+            <label class="check"><input id="friendly-fire" type="checkbox" checked /> Friendly fire</label>
+            <button type="button" id="start-match">Start match</button>
+          </div>
         </div>
         <details id="tune">
           <summary>Balance tuning</summary>

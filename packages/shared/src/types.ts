@@ -1,4 +1,5 @@
 import type { FighterId, FighterState, PartName, PointName } from './constants.js';
+import type { MatchView } from './match.js';
 
 /** Client → sim (and, in Phase 2, client → server). Positions are never sent. */
 export interface InputFrame {
@@ -90,6 +91,7 @@ export interface Snapshot {
   solids: SolidSnapshot[];
   effects: EffectSnapshot[];
   bounds: { minX: number; maxX: number; minY: number; maxY: number };
+  match?: MatchView | null;
 }
 
 export function emptyInput(seq = 0, aimX = 1, aimY = 0): InputFrame {

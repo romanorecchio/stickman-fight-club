@@ -179,6 +179,18 @@ function paintHud(snap: Snapshot): void {
     banner.hidden = !snap.banner;
     banner.textContent = snap.banner ?? '';
   }
+  const board = document.querySelector<HTMLElement>('#scoreboard');
+  if (board) {
+    const match = snap.match;
+    if (!match || match.phase === 'lobby') board.hidden = true;
+    else {
+      board.hidden = false;
+      const lines = match.rows
+        .map((row) => `${row.name}${row.team !== 'none' ? ` ${row.team}` : ''}  ${row.kills}K ${row.deaths}D  ${Math.floor(row.score)}`)
+        .join('\n');
+      board.textContent = `${match.banner ?? match.mode.toUpperCase()}  ${Math.ceil(match.timeLeft)}s\n${lines}`;
+    }
+  }
   const stats = document.querySelector<HTMLElement>('#stats');
   const stability = sim.getStability();
   if (stats) {
@@ -352,6 +364,11 @@ function bindGate(): void {
     online?.leave();
     showGate();
   });
+  document.querySelector('#start-match')?.addEventListener('click', () => {
+    online?.emit('settings', readSettings());
+    online?.emit('start-match');
+  });
+  document.querySelector('#mode-select')?.addEventListener('change', () => online?.emit('settings', readSettings()));
   document.querySelector('#copy-btn')?.addEventListener('click', async () => {
     const url = document.querySelector('#join-url')?.textContent ?? '';
     try {
@@ -365,6 +382,16 @@ function bindGate(): void {
     ensureOnline();
     online?.reconnect(saved);
   }
+}
+
+function readSettings(): Record<string, unknown> {
+  return {
+    mode: (document.querySelector<HTMLSelectElement>('#mode-select')?.value ?? 'ffa'),
+    roundSeconds: Number(document.querySelector<HTMLInputElement>('#round-seconds')?.value ?? 90),
+    scoreLimit: Number(document.querySelector<HTMLInputElement>('#score-limit')?.value ?? 10),
+    elimination: document.querySelector<HTMLInputElement>('#elimination')?.checked ?? false,
+    friendlyFire: document.querySelector<HTMLInputElement>('#friendly-fire')?.checked ?? true,
+  };
 }
 
 function openOnline(kind: 'create' | 'join'): void {
@@ -401,6 +428,8 @@ function renderLobby(lobby: { code: string; hostId: string; players: { id: strin
   if (code) code.textContent = lobby.code;
   if (url) url.textContent = `${location.origin}${location.pathname}?room=${lobby.code}`;
   if (host) host.textContent = lobby.hostId === online?.localId ? 'HOST' : '';
+  const settings = document.querySelector<HTMLElement>('#host-settings');
+  if (settings) settings.hidden = lobby.hostId !== online?.localId;
   if (list) {
     list.replaceChildren(
       ...lobby.players.map((player) => {

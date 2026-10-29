@@ -122,6 +122,18 @@ canvas#view {
   text-align: right;
 }
 
+.scoreboard {
+  margin: 8px 0 0;
+  justify-self: end;
+  white-space: pre;
+  font-size: 0.78rem;
+  color: var(--ink);
+  background: rgba(12, 8, 10, 0.72);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+}
+.scoreboard[hidden] { display: none; }
+
 .banner {
   align-self: center;
   justify-self: center;

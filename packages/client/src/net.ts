@@ -67,6 +67,10 @@ export class OnlineSession {
     this.socket?.emit('reconnect-token', { token });
   }
 
+  emit(event: string, body?: unknown): void {
+    this.socket?.emit(event, body);
+  }
+
   sendInput(input: InputFrame): void {
     this.predictor?.push(input);
     this.socket?.emit('input', input);

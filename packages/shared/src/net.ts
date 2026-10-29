@@ -1,4 +1,5 @@
 import { clamp } from './math.js';
+import type { MatchSettings, MatchView } from './match.js';
 import type { InputFrame, Snapshot } from './types.js';
 
 export const MAX_PLAYERS = 8;
@@ -21,6 +22,8 @@ export interface LobbyState {
   hostId: string;
   players: LobbyPlayer[];
   maxPlayers: number;
+  settings: MatchSettings;
+  phase: string;
 }
 
 export interface Welcome {
@@ -36,6 +39,7 @@ export interface NetSnapshot extends Snapshot {
   you: string;
   ackSeq: number;
   serverNow: number;
+  match: MatchView | null;
 }
 
 export interface RoomError {

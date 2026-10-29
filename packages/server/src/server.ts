@@ -107,6 +107,27 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
         if (problem?.code === 'rate') socket.emit('problem', problem);
       });
     });
+    socket.on('settings', (body: unknown) => {
+      if (!token) return;
+      const code = directory.codeFor(token);
+      const problem = directory.updateSettings(token, body);
+      if (problem) socket.emit('problem', problem);
+      else if (code) pushLobby(code);
+    });
+    socket.on('start-match', () => {
+      if (!token) return;
+      const code = directory.codeFor(token);
+      const problem = directory.startMatch(token);
+      if (problem) socket.emit('problem', problem);
+      else if (code) pushLobby(code);
+    });
+    socket.on('team', (body: { team?: 'red' | 'blue' | 'none' }) => {
+      if (!token) return;
+      const code = directory.codeFor(token);
+      const problem = directory.assignTeam(token, body?.team ?? 'none');
+      if (problem) socket.emit('problem', problem);
+      else if (code) pushLobby(code);
+    });
     socket.on('ping', (sent: number) => {
       later(() => socket.emit('pong', typeof sent === 'number' ? sent : Date.now()));
     });

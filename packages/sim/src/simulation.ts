@@ -89,6 +89,9 @@ export class Simulation {
   private effects: EffectSnapshot[] = [];
   private effectId = 1;
   private hits = { n: 0 };
+  private readonly holdKo = new Set<string>();
+  private readonly teams = new Map<string, string>();
+  friendlyFire = true;
 
   get player(): Fighter {
     return this.must('player');
@@ -324,6 +327,46 @@ export class Simulation {
     };
   }
 
+  setRules(teams: Map<string, string>, friendlyFire: boolean): void {
+    this.teams.clear();
+    for (const [id, team] of teams) if (team === 'red' || team === 'blue') this.teams.set(id, team);
+    this.friendlyFire = friendlyFire;
+  }
+
+  setHoldKo(id: string, hold: boolean): void {
+    if (hold) this.holdKo.add(id);
+    else this.holdKo.delete(id);
+  }
+
+  respawnFighter(id: string): void {
+    const fighter = this.fighters.get(id);
+    if (fighter) this.respawn(fighter);
+  }
+
+  setFighterHp(id: string, hp: number, maxHp = MAX_HP): void {
+    const fighter = this.fighters.get(id);
+    if (!fighter) return;
+    fighter.hp = Math.max(0, Math.min(maxHp, hp));
+    if (fighter.hp <= 0 && fighter.state !== 'ko') {
+      fighter.hp = 0;
+      fighter.state = 'ko';
+      fighter.stateTime = 0;
+      fighter.attack = null;
+      fighter.strike = null;
+    }
+  }
+
+  hurtBy(id: string): string | null {
+    return this.fighters.get(id)?.lastHurtBy ?? null;
+  }
+
+  summaries(): { id: string; name: string; hp: number; state: Fighter['state']; x: number; y: number }[] {
+    return [...this.fighters.values()].map((fighter) => {
+      const pos = fighter.bodies.torso.getPosition();
+      return { id: fighter.id, name: fighter.name, hp: fighter.hp, state: fighter.state, x: pos.x, y: pos.y };
+    });
+  }
+
   debugImpulse(id: FighterId, ix: number, iy: number, angular = 0): void {
     const f = this.byId(id);
     f.spawnProtect = 0;
@@ -349,6 +392,8 @@ export class Simulation {
       params: this.params,
       time: this.time,
       fighters: [...this.fighters.values()],
+      teams: this.teams,
+      friendlyFire: this.friendlyFire,
       hitsLanded: this.hits,
       effects: [] as EffectSpawn[],
     };
@@ -356,7 +401,7 @@ export class Simulation {
 
   private afterPhysics(f: Fighter, dt: number): void {
     if (!this.fighters.has(f.id)) return;
-    if (f.state === 'ko' && f.stateTime > 1.55) {
+    if (f.state === 'ko' && f.stateTime > 1.55 && !this.holdKo.has(f.id)) {
       this.respawn(f);
       return;
     }

@@ -86,6 +86,7 @@ export class Fighter {
   heldBy: Fighter | null = null;
   lastInput: InputFrame;
   envCooldown = 0;
+  lastHurtBy: string | null = null;
   readonly color: number;
 
   constructor(

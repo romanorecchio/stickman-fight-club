@@ -24,6 +24,8 @@ export interface CombatContext {
   params: BalanceParams;
   time: number;
   fighters: Fighter[];
+  teams: Map<string, string>;
+  friendlyFire: boolean;
   hitsLanded: { n: number };
   effects: EffectSpawn[];
 }
@@ -222,6 +224,11 @@ function connect(
   ctx: CombatContext,
 ): void {
   attacker.attackHit = true;
+  if (!ctx.friendlyFire) {
+    const ta = ctx.teams.get(attacker.id);
+    const tb = ctx.teams.get(victim.id);
+    if (ta && ta === tb) return;
+  }
   if (victim.spawnProtect > 0 || victim.state === 'ko') {
     ctx.effects.push({ kind: 'block', x: hit.px, y: hit.py, mag: 0.3, text: '' });
     return;
@@ -265,6 +272,7 @@ function connect(
   }
 
   if (damage > 0.4) {
+    victim.lastHurtBy = attacker.id;
     victim.hp = Math.max(0, victim.hp - damage);
     ctx.hitsLanded.n += 1;
     ctx.effects.push({
