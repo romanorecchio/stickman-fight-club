@@ -1,0 +1,10 @@
+# Terminate HTTPS here. The Node process speaks plain HTTP and WebSocket on :4318.
+# Caddy upgrades the same host to HTTPS and WSS automatically.
+#
+#   caddy run --config deploy/Caddyfile
+#
+# Point the site's DNS at this machine first, and set STATIC_DIR so Node serves the built client.
+
+example.com {
+	reverse_proxy 127.0.0.1:4318
+}

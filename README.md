@@ -1,21 +1,24 @@
 # Stickman Fight Club
 
-Real-time 2D stickman fighting. Phase 1 is a local training room: a physics ragdoll you can walk, jump, punch, kick, grab, throw, knock down, and get back up, plus a dummy that fights back.
+Real-time 2D stickman fighting. Phase 2 is online: a lobby, a 6-character room code, and a server that simulates the fight. The training room is still there, with an optional sparring dummy.
 
-The full design is in [docs/SPEC.md](docs/SPEC.md). How the code is split, and why, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The full design is in [docs/SPEC.md](docs/SPEC.md). How the code is split is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Hosting is in [docs/DEPLOY.md](docs/DEPLOY.md).
 
-## Run
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the URL Vite prints (default [http://127.0.0.1:4317](http://127.0.0.1:4317)).
+That starts the WebSocket server on port 4318 and the page on [http://127.0.0.1:4317](http://127.0.0.1:4317). Vite proxies `/socket.io` to the server.
+
+Enter a name, then **Create lobby** or **Join lobby**. The join link looks like `http://127.0.0.1:4317/?room=K7P4Q2`. **Training room** stays on this computer; uncheck the dummy if you want the arena empty.
 
 ```bash
-npm test          # headless physics and stability
+npm test          # physics suite plus lobby and socket tests
 npm run build     # typecheck, client bundle, server bundle, one-second headless smoke
+npm start         # serve the built server (set STATIC_DIR to also serve the page)
 ```
 
 ## Controls
@@ -39,11 +42,12 @@ On a touch screen, the on-screen buttons drive the same actions. Balance sliders
 
 ## Layout
 
-- `packages/shared` — inputs, snapshots, tuning
-- `packages/sim` — headless Planck / Box2D simulation
-- `packages/client` — Vite, canvas, input
-- `packages/server` — Node host for the same sim (Socket.IO arrives in Phase 2)
+- `packages/shared` — inputs, snapshots, lobby messages
+- `packages/sim` — headless Planck / Box2D simulation (up to 8 fighters)
+- `packages/client` — Vite, canvas, prediction
+- `packages/server` — Socket.IO rooms and the 60 Hz sim
+- `deploy/Caddyfile` — HTTPS/WSS reverse proxy example
 
-## Phase 1 limits
+## Limits right now
 
-This is local only. One human, one dummy, no weapons, no lobbies, no accounts. Joints are rigid Box2D revolute joints with motors and a balance assist, not a passive ragdoll you micromanage. The recommended next step is Phase 2: server-authoritative online matches on this same `Simulation`.
+No accounts, weapons, or match modes. Rooms vanish when the process stops. A hard hit can stretch a joint for a single frame; the solver closes it. Grab is one distance joint. See [docs/DEPLOY.md](docs/DEPLOY.md) to put this on a public URL. That deploy has not been done from this workspace.

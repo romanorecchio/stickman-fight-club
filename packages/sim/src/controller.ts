@@ -80,7 +80,7 @@ export function prepareFighter(f: Fighter, input: InputFrame, dt: number, time: 
   updateState(f, input, dt, params);
 }
 
-export function driveFighter(f: Fighter, input: InputFrame, dt: number, params: BalanceParams, other: Fighter): void {
+export function driveFighter(f: Fighter, input: InputFrame, dt: number, params: BalanceParams, other: Fighter | null): void {
   const torso = f.bodies.torso;
   const angle = normalizeAngle(torso.getAngle());
   const angVel = torso.getAngularVelocity();
@@ -261,7 +261,7 @@ function updateState(f: Fighter, input: InputFrame, dt: number, params: BalanceP
   }
 }
 
-function desiredWorld(f: Fighter, input: InputFrame, other: Fighter, torsoAngle: number): Record<JointName, number> {
+function desiredWorld(f: Fighter, input: InputFrame, other: Fighter | null, torsoAngle: number): Record<JointName, number> {
   const pose = characterPose(f, input);
   const world = toWorld(pose, f.facing);
   const torso = f.bodies.torso;
@@ -281,7 +281,7 @@ function desiredWorld(f: Fighter, input: InputFrame, other: Fighter, torsoAngle:
     if (f.grab) {
       const held = f.grab.victim.bodies[f.grab.victimPart].getPosition();
       target = { x: held.x, y: held.y };
-    } else if (f.grabIntent > 0) {
+    } else if (f.grabIntent > 0 && other) {
       const grabbed = grabAim(origin, other, dir);
       if (grabbed) target = grabbed;
     }

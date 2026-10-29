@@ -86,16 +86,26 @@ export class Fighter {
   heldBy: Fighter | null = null;
   lastInput: InputFrame;
   envCooldown = 0;
+  readonly color: number;
 
-  constructor(world: World, id: FighterId, x: number, facing: 1 | -1, spawnProtect: number) {
+  constructor(
+    world: World,
+    id: FighterId,
+    x: number,
+    facing: 1 | -1,
+    spawnProtect: number,
+    group = id === 'player' ? -1 : id === 'dummy' ? -2 : -3,
+    name = id === 'player' ? 'YOU' : id === 'dummy' ? 'DUMMY' : id,
+    color = id === 'dummy' ? 1 : 0,
+  ) {
     this.id = id;
-    this.name = id === 'player' ? 'YOU' : 'DUMMY';
+    this.name = name;
+    this.color = color;
     this.facing = facing;
     this.spawnX = x;
     this.spawnProtect = spawnProtect;
     this.lastInput = emptyInput(0, facing, 0);
     this.targets = zeroTargets();
-    const group = id === 'player' ? -1 : -2;
     const layout = layoutCharacter(x);
     const bodies = {} as Record<PartName, Body>;
     const fixtures = {} as Record<PartName, Fixture>;

@@ -23,8 +23,7 @@ export interface EffectSpawn {
 export interface CombatContext {
   params: BalanceParams;
   time: number;
-  player: Fighter;
-  dummy: Fighter;
+  fighters: Fighter[];
   hitsLanded: { n: number };
   effects: EffectSpawn[];
 }
@@ -41,6 +40,7 @@ export function attachContacts(world: World, queue: QueuedHit[], ctx: () => Comb
       const foot = da.kind === 'fighter' ? da : db.kind === 'fighter' ? db : null;
       if (foot && foot.kind === 'fighter') {
         const fighter = byId(ctx(), foot.id);
+        if (!fighter) return;
         contact.setFriction(footFrictionFor(fighter, ctx().params.footFriction));
       }
     }
@@ -177,6 +177,7 @@ function resolveFighterHit(
 ): void {
   const fighterA = byId(ctx, a.id);
   const fighterB = byId(ctx, b.id);
+  if (!fighterA || !fighterB) return;
   const strikeA = strikeOf(fighterA, a.part, ctx.time);
   const strikeB = strikeOf(fighterB, b.part, ctx.time);
   let attacker = fighterA;
@@ -319,7 +320,7 @@ function resolveWorldHit(hit: QueuedHit, ctx: CombatContext): void {
     return;
   }
   const fighter = byId(ctx, fighterData.id);
-  if (fighter.spawnProtect > 0 || fighter.envCooldown > 0 || fighter.state === 'ko') return;
+  if (!fighter || fighter.spawnProtect > 0 || fighter.envCooldown > 0 || fighter.state === 'ko') return;
   if (worldData.surface === 'ground' && !(fighterData.part === 'head' && hit.relSpeed > 12)) return;
   if (hit.relSpeed < 8) return;
   fighter.envCooldown = 0.4;
@@ -366,8 +367,8 @@ function limbSpeed(body: Body): number {
   return Math.hypot(v.x, v.y);
 }
 
-function byId(ctx: CombatContext, id: FighterId): Fighter {
-  return id === 'player' ? ctx.player : ctx.dummy;
+function byId(ctx: CombatContext, id: FighterId): Fighter | undefined {
+  return ctx.fighters.find((fighter) => fighter.id === id);
 }
 
 function footFrictionFor(fighter: Fighter, planted: number): number {

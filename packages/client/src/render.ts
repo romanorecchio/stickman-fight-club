@@ -22,17 +22,33 @@ export interface View {
   height: number;
 }
 
-const LOOK = {
-  player: { bone: '#f4efe4', ink: '#1a1210', joint: '#7ad7ff' },
-  dummy: { bone: '#f3c3a4', ink: '#24110e', joint: '#ff5a36' },
-} as const;
+const PALETTE = [
+  { bone: '#f4efe4', ink: '#1a1210', joint: '#7ad7ff' },
+  { bone: '#f3c3a4', ink: '#24110e', joint: '#ff5a36' },
+  { bone: '#d9f5c9', ink: '#14210f', joint: '#8dff7a' },
+  { bone: '#f7e7a1', ink: '#241e0c', joint: '#ffe14a' },
+  { bone: '#e4d4ff', ink: '#1a1424', joint: '#c49bff' },
+  { bone: '#ffd0e0', ink: '#241018', joint: '#ff7aa8' },
+  { bone: '#d4f1ff', ink: '#102028', joint: '#5ad0ff' },
+  { bone: '#ffe0cc', ink: '#24160e', joint: '#ff9a4a' },
+] as const;
 
 export function createCamera(): Camera {
   return { x: -1.6, y: 1.7, zoom: 86, shake: 0, ox: 0, oy: 0 };
 }
 
-export function updateCamera(cam: Camera, snap: Snapshot, dt: number, view: View, shakeEnabled: boolean): void {
-  const player = snap.fighters.find((fighter) => fighter.id === 'player') ?? snap.fighters[0];
+export function updateCamera(
+  cam: Camera,
+  snap: Snapshot,
+  dt: number,
+  view: View,
+  shakeEnabled: boolean,
+  focusId = 'player',
+): void {
+  const player =
+    snap.fighters.find((fighter) => fighter.id === focusId) ??
+    snap.fighters.find((fighter) => fighter.id === 'player') ??
+    snap.fighters[0];
   if (!player) return;
   const hip = player.points.hip;
   const targetX = hip.x + clamp(player.vx * 0.18, -1.3, 1.3) + player.facing * 0.15;
@@ -185,7 +201,7 @@ function drawFighter(
   fighter: FighterSnapshot,
   front: boolean,
 ): void {
-  const look = LOOK[fighter.id];
+  const look = PALETTE[fighter.color % PALETTE.length] ?? PALETTE[0];
   const pt = (name: PointName) => screenPoint(cam, view, fighter.points[name]);
   ctx.save();
   ctx.lineCap = 'round';

@@ -77,3 +77,20 @@ export const ARENA = {
   spawnPlayer: -1.6,
   spawnDummy: 2.05,
 };
+
+/** Ground positions clear of platforms and the crate. */
+export const SPAWN_XS = [-8.8, -3.3, -1.6, 0.6, 2.05, 3.5, 8.5, 9.8];
+
+/** Pick a free spawn near the group, and never on top of another fighter. */
+export function chooseSpawn(occupied: number[]): number {
+  if (occupied.length === 0) return -1.6;
+  const mean = occupied.reduce((sum, value) => sum + value, 0) / occupied.length;
+  const ranked = SPAWN_XS.map((x) => ({
+    x,
+    gap: Math.min(...occupied.map((other) => Math.abs(x - other))),
+  })).sort((a, b) => b.gap - a.gap);
+  const safe = ranked.filter((item) => item.gap >= 1.2);
+  const pool = safe.length > 0 ? safe : ranked;
+  pool.sort((a, b) => Math.abs(a.x - mean) - Math.abs(b.x - mean));
+  return pool[0]?.x ?? -1.6;
+}

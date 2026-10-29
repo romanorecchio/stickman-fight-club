@@ -7,10 +7,11 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w @sfc/client",
-    "build": "tsc -p tsconfig.json --noEmit && npm run build -w @sfc/client && node scripts/build-server.mjs && node packages/server/dist/index.js",
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc -p tsconfig.json --noEmit && npm run build -w @sfc/client && node scripts/build-server.mjs && SFC_SMOKE=1 node packages/server/dist/index.js",
+    "start": "node packages/server/dist/index.js",
     "test": "vitest run",
-    "headless": "node packages/server/dist/index.js"
+    "headless": "SFC_SMOKE=1 node packages/server/dist/index.js"
   },
   "engines": {
     "node": ">=20"

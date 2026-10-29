@@ -9,4 +9,5 @@ await esbuild.build({
   outfile: 'packages/server/dist/index.js',
   sourcemap: true,
   logLevel: 'info',
+  external: ['socket.io'],
 });

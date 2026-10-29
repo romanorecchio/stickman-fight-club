@@ -47,22 +47,22 @@ Hits come from real fixture contacts whose relative speed is high enough to igno
 
 Balance parameters are the `BalanceParams` object. The training room writes them live. Sliders cannot invert fall and stumble thresholds; `sanitizeBalance` clamps the bag.
 
-## Phase 2 netcode (not built)
+## Phase 2 netcode
 
-The server will own one `Simulation` per room at 60 Hz.
+`packages/server` owns one `Simulation` per lobby and steps it at 60 Hz. Clients send `InputFrame`s with `seq` only. The server drops duplicates, jumps larger than 32, and anything over 90 inputs in a rolling second. Cooldowns and damage stay inside the sim.
 
-- Clients send `InputFrame`s with `seq`, not positions.
-- The server validates rate, cooldowns, and teams, then steps.
-- Snapshots go out at about 20 Hz with a tick id. Full `FighterSnapshot`s exist now; the wire format should send deltas (changed poses, events) plus a keyframe every half second.
-- The owning client predicts by stepping a local copy, then reconciles when the authoritative snapshot for that `seq` arrives. Remote fighters interpolate between snapshots and never get to write the world.
-- Rooms stay in memory. Reconnect tokens and host migration are server state, not client state.
+Every third tick (20 Hz) each connected socket gets a `NetSnapshot`: world state, `tick`, `time`, `serverNow`, and `ackSeq` (the last input seq applied for that client).
 
-`packages/server` exports `createAuthoritativeMatch()` as that seam. It currently steps and returns a snapshot. It does not open a socket and it does not pretend to.
+The browser keeps a short buffer of those snapshots. Remote fighters are interpolated at `latest.time - delay`, where delay tracks ping (about 80–400 ms). The local fighter is predicted by a private sim that replays inputs newer than `ackSeq`. A large position error, an HP change, or a state change resets that sim to the server pose and replays the unacked inputs. HP on screen is always the server value.
+
+Lobbies are in memory. A 6-character code from an unambiguous alphabet identifies a room of at most 8 fighters. The host is the earliest connected player; if they drop, the next one becomes host. A disconnect keeps the fighter for `RECONNECT_GRACE_MS` and the same token (24 random bytes, base64url) can bind a new socket to it. An intentional leave deletes the fighter immediately. Spawns are chosen from ground points at least 1.2 m from anyone already there.
+
+Full poses are sent at 20 Hz rather than deltas. Eight ragdolls at that rate is small enough to stay correct; deltas can replace the body of the snapshot later without changing the tick or ack.
 
 ## Later: Chaos Control
 
 Not in this phase. When it lands, it is a server-side `OverrideStack` applied at the top of `step`: timed property overrides (gravity, motor scale, friction, hazard spawns) with an id, an expiry, and a cleanup so a round reset cannot leak one. `BalanceParams` is the bag those overrides will wrap. Only an authenticated owner channel may push them. Clients render the result; they do not author it.
 
-## What Phase 1 deliberately leaves out
+## Still later
 
-Menus, lobbies, accounts, weapons, the six-map list, match modes, and deployment. The arena is one room with a floor, three platforms, walls, and a crate, which is enough to walk, jump, fall, and slam into something.
+Accounts, weapons, the six-map list, and match modes. The arena is still one room: floor, three platforms, walls, and a crate. Deployment config is in `docs/DEPLOY.md`; running it on a public host is an operator step, not something this repo does by itself.

@@ -1,7 +1,8 @@
-import { DEFAULT_BALANCE, FIXED_DT, sanitizeBalance, type BalanceParams, type Snapshot } from '@sfc/shared';
+import { DEFAULT_BALANCE, FIXED_DT, sanitizeBalance, type BalanceParams, type FighterSnapshot, type Snapshot } from '@sfc/shared';
 import { Simulation } from '@sfc/sim';
 import { isMuted, playEffect, setMuted } from './audio.js';
 import { buildInput, consumePress, installInput, pointer } from './input.js';
+import { OnlineSession } from './net.js';
 import { createCamera, drawFrame, interpolate, updateCamera, worldPoint, type View } from './render.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -15,6 +16,8 @@ if (!ctx) {
 
 const sim = new Simulation({ seed: 1, ai: true });
 const camera = createCamera();
+let mode: 'gate' | 'training' | 'online' = 'gate';
+let online: OnlineSession | null = null;
 let prev = sim.getSnapshot();
 let curr = prev;
 let acc = 0;
@@ -32,9 +35,16 @@ resize();
 window.addEventListener('resize', resize);
 
 const api = {
-  getSnapshot: () => sim.getSnapshot(),
+  getSnapshot: () => (mode === 'online' ? (online?.latest() ?? curr) : sim.getSnapshot()),
   getProbe: (id: 'player' | 'dummy') => sim.getProbe(id),
   getStability: () => sim.getStability(),
+  getMode: () => mode,
+  getNet: () => ({
+    lobby: online?.lobby ?? null,
+    latest: online?.latest() ?? null,
+    localId: online?.localId ?? '',
+    rtt: online?.rtt ?? 0,
+  }),
   debugImpulse: (id: 'player' | 'dummy', ix: number, iy: number, ang = 0) => sim.debugImpulse(id, ix, iy, ang),
   debugShift: (id: 'player' | 'dummy', dx: number, dy: number) => sim.debugShift(id, dx, dy),
   setBalance: (partial: Partial<BalanceParams>) => {
@@ -52,7 +62,7 @@ function frame(now: number): void {
   if (consumePress('Escape')) togglePause();
   if (consumePress('F3')) debug = !debug;
 
-  if (!paused) {
+  if (mode === 'training' && !paused) {
     acc += dt;
     let steps = 0;
     const aim = aimVector();
@@ -65,17 +75,66 @@ function frame(now: number): void {
       steps += 1;
     }
     noteEffects(curr);
+  } else if (mode === 'online' && online) {
+    if (!paused) {
+      online.sendInput(buildInput(seq, aimVector()));
+      seq += 1;
+    }
+    const display = composeOnline();
+    if (display) {
+      prev = curr;
+      curr = display;
+      noteEffects(display);
+    }
   }
-  updateCamera(camera, curr, dt, view, shake);
-  const alpha = paused ? 1 : acc / FIXED_DT;
-  drawFrame(ctx!, interpolate(prev, curr, alpha), camera, view, debug, now);
+  const focusId = mode === 'online' ? (online?.localId || 'player') : 'player';
+  updateCamera(camera, curr, dt, view, shake, focusId);
+  const alpha = mode === 'online' || paused ? 1 : acc / FIXED_DT;
+  drawFrame(ctx!, mode === 'online' ? curr : interpolate(prev, curr, alpha), camera, view, debug, now);
   paintHud(curr);
   requestAnimationFrame(frame);
 }
 
+function composeOnline(): Snapshot | null {
+  if (!online) return null;
+  const sample = online.sample(performance.now());
+  if (!sample) return null;
+  const merged = interpolate(sample.older, sample.newer, sample.alpha);
+  const predicted = online.predicted();
+  const serverMine = sample.newer.fighters.find((fighter) => fighter.id === online?.localId);
+  if (predicted && serverMine) {
+    merged.fighters = merged.fighters.map((fighter) =>
+      fighter.id === serverMine.id ? blendLocal(predicted, serverMine) : fighter,
+    );
+    merged.banner = bannerFor(serverMine);
+  }
+  return merged;
+}
+
+function blendLocal(predicted: FighterSnapshot, server: FighterSnapshot): FighterSnapshot {
+  return {
+    ...predicted,
+    hp: server.hp,
+    maxHp: server.maxHp,
+    state: server.state,
+    name: server.name,
+    color: server.color,
+    flash: Math.max(predicted.flash, server.flash),
+    protecting: server.protecting,
+  };
+}
+
+function bannerFor(fighter: FighterSnapshot): string | null {
+  if (fighter.state === 'ko') return "YOU'RE DOWN";
+  if (fighter.state === 'fallen') return 'GET UP';
+  if (fighter.state === 'getup') return 'GETTING UP';
+  return null;
+}
+
 function aimVector(): { x: number; y: number } {
   const mouse = pointer();
-  const torso = curr.fighters.find((fighter) => fighter.id === 'player')?.points.shoulder ?? { x: camera.x, y: camera.y };
+  const focus = mode === 'online' ? online?.localId : 'player';
+  const torso = curr.fighters.find((fighter) => fighter.id === focus)?.points.shoulder ?? { x: camera.x, y: camera.y };
   if (!mouse.ready) return { x: 1, y: 0.1 };
   const world = worldPoint(camera, view, mouse.x, mouse.y);
   return { x: world.x - torso.x, y: world.y - torso.y };
@@ -94,10 +153,27 @@ function noteEffects(snap: Snapshot): void {
 }
 
 function paintHud(snap: Snapshot): void {
-  const player = snap.fighters.find((fighter) => fighter.id === 'player');
-  const dummy = snap.fighters.find((fighter) => fighter.id === 'dummy');
-  setBar('player', player);
-  setBar('dummy', dummy);
+  const roster = document.querySelector<HTMLElement>('#roster');
+  if (roster) {
+    const focus = mode === 'online' ? online?.localId : 'player';
+    roster.replaceChildren(
+      ...snap.fighters.map((fighter) => {
+        const bar = document.createElement('div');
+        bar.className = `bar ${fighter.id === focus ? 'you' : 'them'}`;
+        const pct = Math.max(0, Math.min(100, (fighter.hp / fighter.maxHp) * 100));
+        bar.innerHTML = `<div class="bar-top"><span></span><em></em><b></b></div><div class="track"><div class="fill"></div></div>`;
+        const name = bar.querySelector('span');
+        const state = bar.querySelector('em');
+        const num = bar.querySelector('b');
+        const fill = bar.querySelector<HTMLElement>('.fill');
+        if (name) name.textContent = fighter.name;
+        if (state) state.textContent = label(fighter.state, fighter.attack, fighter.blocking, fighter.grabbing);
+        if (num) num.textContent = String(Math.round(fighter.hp));
+        if (fill) fill.style.width = `${pct}%`;
+        return bar;
+      }),
+    );
+  }
   const banner = document.querySelector<HTMLElement>('#banner');
   if (banner) {
     banner.hidden = !snap.banner;
@@ -106,19 +182,9 @@ function paintHud(snap: Snapshot): void {
   const stats = document.querySelector<HTMLElement>('#stats');
   const stability = sim.getStability();
   if (stats) {
-    stats.textContent = `${Math.round(fps)} fps · ${stability.bodyCount} bodies · joint ${stability.maxJointSeparation.toFixed(3)} m`;
+    const ping = mode === 'online' && online ? ` · ${Math.round(online.rtt)} ms` : '';
+    stats.textContent = `${Math.round(fps)} fps${ping} · ${snap.fighters.length} fighters · joint ${stability.maxJointSeparation.toFixed(3)} m`;
   }
-}
-
-function setBar(id: 'player' | 'dummy', fighter: Snapshot['fighters'][number] | undefined): void {
-  const fill = document.querySelector<HTMLElement>(`#hp-${id}`);
-  const num = document.querySelector<HTMLElement>(`#hp-${id}-n`);
-  const state = document.querySelector<HTMLElement>(`#state-${id}`);
-  if (!fighter || !fill || !num || !state) return;
-  const pct = Math.max(0, Math.min(100, (fighter.hp / fighter.maxHp) * 100));
-  fill.style.width = `${pct}%`;
-  num.textContent = String(Math.round(fighter.hp));
-  state.textContent = label(fighter.state, fighter.attack, fighter.blocking, fighter.grabbing);
 }
 
 function label(state: string, attack: string | null, blocking: boolean, grabbing: boolean): string {
@@ -265,7 +331,128 @@ const TUNABLES: { key: keyof BalanceParams; label: string; min: number; max: num
 ];
 
 bindHud();
+bindGate();
 requestAnimationFrame(frame);
+
+function bindGate(): void {
+  const params = new URLSearchParams(location.search);
+  const codeInput = document.querySelector<HTMLInputElement>('#code');
+  const nameInput = document.querySelector<HTMLInputElement>('#name');
+  if (codeInput && params.get('room')) codeInput.value = params.get('room') ?? '';
+  if (nameInput) nameInput.value = sessionStorage.getItem('sfc-name') ?? '';
+  document.querySelector('#train-btn')?.addEventListener('click', () => {
+    const dummyOn = document.querySelector<HTMLInputElement>('#dummy-toggle')?.checked ?? true;
+    sim.setDummyEnabled(dummyOn);
+    enterTraining();
+  });
+  document.querySelector('#create-btn')?.addEventListener('click', () => openOnline('create'));
+  document.querySelector('#join-btn')?.addEventListener('click', () => openOnline('join'));
+  document.querySelector('#leave-btn')?.addEventListener('click', () => {
+    sessionStorage.removeItem('sfc-token');
+    online?.leave();
+    showGate();
+  });
+  document.querySelector('#copy-btn')?.addEventListener('click', async () => {
+    const url = document.querySelector('#join-url')?.textContent ?? '';
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // clipboard can be blocked; the URL is still on screen
+    }
+  });
+  const saved = sessionStorage.getItem('sfc-token');
+  if (saved) {
+    ensureOnline();
+    online?.reconnect(saved);
+  }
+}
+
+function openOnline(kind: 'create' | 'join'): void {
+  const name = document.querySelector<HTMLInputElement>('#name')?.value ?? '';
+  const code = document.querySelector<HTMLInputElement>('#code')?.value ?? '';
+  sessionStorage.setItem('sfc-name', name);
+  ensureOnline();
+  if (kind === 'create') online?.create(name);
+  else online?.join(name, code);
+}
+
+function ensureOnline(): void {
+  if (online) return;
+  online = new OnlineSession({
+    onWelcome: (welcome) => {
+      sessionStorage.setItem('sfc-token', welcome.token);
+      sessionStorage.setItem('sfc-code', welcome.code);
+      mode = 'online';
+      seq = 1;
+      showMatch(welcome.code, welcome.hostId === welcome.playerId);
+      renderLobby(welcome.lobby);
+    },
+    onLobby: (lobby) => renderLobby(lobby),
+    onProblem: (problem) => showProblem(problem.message),
+    onLeft: () => showGate(),
+  });
+}
+
+function renderLobby(lobby: { code: string; hostId: string; players: { id: string; name: string; host: boolean; connected: boolean }[] }): void {
+  const code = document.querySelector('#room-code');
+  const url = document.querySelector('#join-url');
+  const list = document.querySelector('#lobby-list');
+  const host = document.querySelector('#host-tag');
+  if (code) code.textContent = lobby.code;
+  if (url) url.textContent = `${location.origin}${location.pathname}?room=${lobby.code}`;
+  if (host) host.textContent = lobby.hostId === online?.localId ? 'HOST' : '';
+  if (list) {
+    list.replaceChildren(
+      ...lobby.players.map((player) => {
+        const item = document.createElement('li');
+        item.textContent = `${player.name}${player.host ? ' · host' : ''}${player.connected ? '' : ' · reconnecting'}`;
+        return item;
+      }),
+    );
+  }
+}
+
+function enterTraining(): void {
+  mode = 'training';
+  document.querySelector<HTMLElement>('#gate')!.hidden = true;
+  document.querySelector<HTMLElement>('#lobby-card')!.hidden = true;
+  document.querySelector<HTMLElement>('#leave-btn')!.hidden = true;
+  document.querySelector<HTMLElement>('#reset-btn')!.hidden = false;
+  document.querySelector<HTMLElement>('#tune')!.hidden = false;
+  const eyebrow = document.querySelector('#eyebrow');
+  if (eyebrow) eyebrow.textContent = 'Training room';
+  prev = sim.getSnapshot();
+  curr = prev;
+}
+
+function showMatch(code: string, host: boolean): void {
+  document.querySelector<HTMLElement>('#gate')!.hidden = true;
+  document.querySelector<HTMLElement>('#lobby-card')!.hidden = false;
+  document.querySelector<HTMLElement>('#leave-btn')!.hidden = false;
+  document.querySelector<HTMLElement>('#reset-btn')!.hidden = true;
+  document.querySelector<HTMLElement>('#tune')!.hidden = true;
+  const eyebrow = document.querySelector('#eyebrow');
+  if (eyebrow) eyebrow.textContent = host ? `Lobby ${code} · host` : `Lobby ${code}`;
+  const problem = document.querySelector<HTMLElement>('#gate-error');
+  if (problem) problem.hidden = true;
+}
+
+function showGate(): void {
+  mode = 'gate';
+  document.querySelector<HTMLElement>('#gate')!.hidden = false;
+  document.querySelector<HTMLElement>('#lobby-card')!.hidden = true;
+  document.querySelector<HTMLElement>('#leave-btn')!.hidden = true;
+  document.querySelector<HTMLElement>('#reset-btn')!.hidden = false;
+  document.querySelector<HTMLElement>('#tune')!.hidden = false;
+}
+
+function showProblem(message: string): void {
+  const problem = document.querySelector<HTMLElement>('#gate-error');
+  if (!problem) return;
+  problem.hidden = false;
+  problem.textContent = message;
+  document.querySelector<HTMLElement>('#gate')!.hidden = false;
+}
 
 declare global {
   interface Window {

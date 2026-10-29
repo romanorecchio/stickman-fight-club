@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@sfc/shared": "*",
-    "@sfc/sim": "*"
+    "@sfc/sim": "*",
+    "socket.io": "^4.8.1"
   }
 }

@@ -50,6 +50,8 @@ export interface FighterSnapshot {
   protecting: boolean;
   flash: number;
   headAngle: number;
+  /** Palette index. Training: 0 you, 1 dummy. */
+  color: number;
   parts: PartPose[];
   points: Record<PointName, Vec2>;
 }

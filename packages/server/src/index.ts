@@ -1,12 +1,8 @@
 import { pathToFileURL } from 'node:url';
 import { emptyInput, FIXED_DT, type InputFrame, type Snapshot } from '@sfc/shared';
 import { Simulation, type SimOptions } from '@sfc/sim';
+import { startServer } from './server.js';
 
-/**
- * Phase 2 will hang Socket.IO off this match: clients push InputFrames,
- * the server steps the shared Simulation at 60 Hz, and snapshots go out
- * at a lower rate. Phase 1 only proves the sim runs headless in Node.
- */
 export function createAuthoritativeMatch(options: SimOptions = {}) {
   const sim = new Simulation({ ai: false, ...options });
   return {
@@ -17,6 +13,9 @@ export function createAuthoritativeMatch(options: SimOptions = {}) {
     },
   };
 }
+
+export { startServer } from './server.js';
+export { MatchDirectory } from './rooms.js';
 
 function smoke(): void {
   const match = createAuthoritativeMatch({ seed: 1 });
@@ -32,4 +31,17 @@ function smoke(): void {
 }
 
 const entry = process.argv[1];
-if (entry && import.meta.url === pathToFileURL(entry).href) smoke();
+if (entry && import.meta.url === pathToFileURL(entry).href) {
+  if (process.env.SFC_SMOKE === '1') smoke();
+  else {
+    startServer()
+      .then((server) => {
+        const dir = process.env.STATIC_DIR ? ` static=${process.env.STATIC_DIR}` : '';
+        console.log(`stickman server listening on :${server.port}${dir}`);
+      })
+      .catch((error: unknown) => {
+        console.error(error);
+        process.exit(1);
+      });
+  }
+}

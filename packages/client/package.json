@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sfc/shared": "*",
-    "@sfc/sim": "*"
+    "@sfc/sim": "*",
+    "socket.io-client": "^4.8.1"
   }
 }

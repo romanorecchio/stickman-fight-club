@@ -64,7 +64,8 @@ export const POINT_NAMES = [
 
 export type PointName = (typeof POINT_NAMES)[number];
 
-export type FighterId = 'player' | 'dummy';
+/** Stable id. Training uses `player` and `dummy`; online rooms use server-issued ids. */
+export type FighterId = string;
 
 export type FighterState =
   | 'idle'

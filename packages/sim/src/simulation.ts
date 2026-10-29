@@ -24,7 +24,7 @@ import { buildArena } from './arena.js';
 import { attachContacts, releaseGrab, resolveHits, tryAttachGrab, updateGrab, type EffectSpawn, type QueuedHit } from './combat.js';
 import { driveFighter, prepareFighter } from './controller.js';
 import { Fighter, type UserData } from './fighter.js';
-import { ARENA, FOOT, HAND, HEAD, LOWER_ARM, LOWER_LEG, TORSO, UPPER_ARM, UPPER_LEG } from './metrics.js';
+import { ARENA, chooseSpawn, FOOT, HAND, HEAD, LOWER_ARM, LOWER_LEG, TORSO, UPPER_ARM, UPPER_LEG } from './metrics.js';
 
 export interface SimOptions {
   seed?: number;
@@ -32,6 +32,8 @@ export interface SimOptions {
   balance?: Partial<BalanceParams>;
   spawns?: { player?: number; dummy?: number };
   spawnProtect?: number;
+  /** `empty` starts with nobody, for an online room. Default builds the training pair. */
+  roster?: 'training' | 'empty';
 }
 
 export interface FighterProbe {
@@ -73,8 +75,9 @@ const MAX_ANGULAR = 55;
 
 export class Simulation {
   readonly world: World;
-  readonly player: Fighter;
-  readonly dummy: Fighter;
+  private readonly fighters = new Map<string, Fighter>();
+  private nextGroup = 1;
+  private readonly pending: Array<() => void> = [];
   private params: BalanceParams;
   private readonly ai: boolean;
   private readonly spawnPlayer: number;
@@ -86,6 +89,14 @@ export class Simulation {
   private effects: EffectSnapshot[] = [];
   private effectId = 1;
   private hits = { n: 0 };
+
+  get player(): Fighter {
+    return this.must('player');
+  }
+
+  get dummy(): Fighter {
+    return this.must('dummy');
+  }
 
   tick = 0;
   time = 0;
@@ -110,39 +121,54 @@ export class Simulation {
     this.world = new World({ gravity: { x: 0, y: this.params.gravity } });
     this.world.setAllowSleeping(true);
     this.solids = buildArena(this.world);
-    this.player = new Fighter(this.world, 'player', this.spawnPlayer, 1, this.spawnProtectDuration);
-    this.dummy = new Fighter(this.world, 'dummy', this.spawnDummy, -1, this.spawnProtectDuration);
+    if (options.roster !== 'empty') {
+      this.spawnAt('player', 'YOU', 0, this.spawnPlayer, 1);
+      this.spawnAt('dummy', 'DUMMY', 1, this.spawnDummy, -1);
+    }
     attachContacts(this.world, this.hitQueue, () => this.combatContext());
   }
 
+  /** Training-room entry. Online rooms call `stepAll`. */
   step(dt: number, input: InputFrame): void {
+    const playerInput: InputFrame = { ...input, moveX: clamp(input.moveX, -1, 1) };
+    const inputs = new Map<string, InputFrame>([['player', playerInput]]);
+    const dummy = this.fighters.get('dummy');
+    const player = this.fighters.get('player');
+    if (dummy && player) {
+      inputs.set(
+        'dummy',
+        this.ai
+          ? thinkDummy(this.tick + 1, dummy, player, this.rng)
+          : emptyInput(this.tick + 1, player.bodies.torso.getPosition().x - dummy.bodies.torso.getPosition().x, 0),
+      );
+    }
+    this.stepAll(dt, inputs);
+    this.lastInputSeq = playerInput.seq;
+  }
+
+  stepAll(dt: number, inputs: ReadonlyMap<string, InputFrame>): void {
     const stepDt = dt > 0 ? dt : FIXED_DT;
+    this.flush();
     this.tick += 1;
     this.time += stepDt;
-    this.lastInputSeq = input.seq;
     this.hitQueue.length = 0;
+    const roster = [...this.fighters.values()];
 
-    const playerInput: InputFrame = { ...input, moveX: clamp(input.moveX, -1, 1) };
-    const dummyInput = this.ai
-      ? thinkDummy(this.tick, this.dummy, this.player, this.rng)
-      : emptyInput(this.tick, this.player.bodies.torso.getPosition().x - this.dummy.bodies.torso.getPosition().x, 0);
-
-    this.player.vyPrev = this.player.bodies.torso.getLinearVelocity().y;
-    this.dummy.vyPrev = this.dummy.bodies.torso.getLinearVelocity().y;
-
-    prepareFighter(this.player, playerInput, stepDt, this.time, this.params);
-    prepareFighter(this.dummy, dummyInput, stepDt, this.time, this.params);
-    if (this.player.throwQueued) {
-      this.player.throwQueued = false;
-      this.doThrow(this.player);
+    for (const fighter of roster) {
+      const input = inputs.get(fighter.id) ?? fighter.lastInput;
+      fighter.vyPrev = fighter.bodies.torso.getLinearVelocity().y;
+      prepareFighter(fighter, { ...input, moveX: clamp(input.moveX, -1, 1) }, stepDt, this.time, this.params);
     }
-    if (this.dummy.throwQueued) {
-      this.dummy.throwQueued = false;
-      this.doThrow(this.dummy);
+    for (const fighter of roster) {
+      if (!fighter.throwQueued) continue;
+      fighter.throwQueued = false;
+      this.doThrow(fighter);
     }
     this.capVelocities(false);
-    driveFighter(this.player, playerInput, stepDt, this.params, this.dummy);
-    driveFighter(this.dummy, dummyInput, stepDt, this.params, this.player);
+    for (const fighter of roster) {
+      const input = inputs.get(fighter.id) ?? fighter.lastInput;
+      driveFighter(fighter, { ...input, moveX: clamp(input.moveX, -1, 1) }, stepDt, this.params, this.grabTarget(fighter));
+    }
 
     this.world.step(stepDt, 22, 16);
 
@@ -152,23 +178,77 @@ export class Simulation {
     resolveHits(this.hitQueue, ctx);
     for (const effect of spawned) this.spawnEffect(effect);
 
-    this.afterPhysics(this.player, this.dummy, stepDt);
-    this.afterPhysics(this.dummy, this.player, stepDt);
+    for (const fighter of [...this.fighters.values()]) this.afterPhysics(fighter, stepDt);
     this.capVelocities(true);
     this.decayEffects(stepDt);
   }
 
+  addFighter(id: string, name: string, color: number): void {
+    const run = () => {
+      if (this.fighters.has(id) || this.fighters.size >= 8) return;
+      const occupied = [...this.fighters.values()].map((fighter) => fighter.bodies.torso.getPosition().x);
+      const x = chooseSpawn(occupied);
+      const mean = occupied.length === 0 ? x + 1 : occupied.reduce((sum, value) => sum + value, 0) / occupied.length;
+      this.spawnAt(id, name, color, x, mean >= x ? 1 : -1);
+    };
+    if (this.world.isLocked()) this.pending.push(run);
+    else run();
+  }
+
+  removeFighter(id: string): void {
+    const run = () => {
+      const fighter = this.fighters.get(id);
+      if (!fighter) return;
+      this.breakGrabs(fighter);
+      for (const part of PARTS) this.world.destroyBody(fighter.bodies[part]);
+      this.fighters.delete(id);
+    };
+    if (this.world.isLocked()) this.pending.push(run);
+    else run();
+  }
+
+  setDummyEnabled(enabled: boolean): void {
+    if (enabled && !this.fighters.has('dummy')) this.spawnAt('dummy', 'DUMMY', 1, this.spawnDummy, -1);
+    if (!enabled && this.fighters.has('dummy')) this.removeFighter('dummy');
+  }
+
+  applyFighterState(id: string, snap: FighterSnapshot): void {
+    const fighter = this.fighters.get(id);
+    if (!fighter) return;
+    for (const part of snap.parts) {
+      const body = fighter.bodies[part.part];
+      body.setTransform({ x: part.x, y: part.y }, part.angle);
+      body.setLinearVelocity({ x: snap.vx, y: snap.vy });
+      body.setAngularVelocity(0);
+      body.setAwake(true);
+    }
+    fighter.hp = snap.hp;
+    if (fighter.state !== snap.state) fighter.stateTime = 0;
+    fighter.state = snap.state;
+    fighter.facing = snap.facing;
+    fighter.grounded = snap.grounded;
+    fighter.blocking = snap.blocking;
+    fighter.attack = snap.attack;
+    fighter.flash = snap.flash;
+    fighter.spawnProtect = snap.protecting ? Math.max(fighter.spawnProtect, 0.2) : 0;
+  }
+
   reset(): void {
-    this.breakGrabs(this.player);
-    this.breakGrabs(this.dummy);
-    this.player.place(this.spawnPlayer);
-    this.dummy.place(this.spawnDummy);
-    this.player.hp = MAX_HP;
-    this.dummy.hp = MAX_HP;
-    this.player.spawnProtect = this.spawnProtectDuration;
-    this.dummy.spawnProtect = this.spawnProtectDuration;
-    this.player.facing = 1;
-    this.dummy.facing = -1;
+    for (const fighter of this.fighters.values()) this.breakGrabs(fighter);
+    const player = this.fighters.get('player');
+    const dummy = this.fighters.get('dummy');
+    if (player) {
+      player.place(this.spawnPlayer);
+      player.hp = MAX_HP;
+      player.spawnProtect = this.spawnProtectDuration;
+      player.facing = 1;
+    }
+    if (dummy) {
+      dummy.place(this.spawnDummy);
+      dummy.hp = MAX_HP;
+      dummy.spawnProtect = this.spawnProtectDuration;
+      dummy.facing = -1;
+    }
     this.effects = [];
     this.hitQueue.length = 0;
   }
@@ -224,18 +304,20 @@ export class Simulation {
     };
   }
 
-  getSnapshot(): Snapshot {
+  getSnapshot(focusId = 'player'): Snapshot {
+    const focus = this.fighters.get(focusId);
+    const dummy = this.fighters.get('dummy');
     let banner: string | null = null;
-    if (this.player.state === 'ko') banner = "YOU'RE DOWN";
-    else if (this.dummy.state === 'ko') banner = 'DUMMY DOWN';
-    else if (this.player.state === 'fallen') banner = 'GET UP';
-    else if (this.player.state === 'getup') banner = 'GETTING UP';
+    if (focus?.state === 'ko') banner = "YOU'RE DOWN";
+    else if (focusId === 'player' && dummy?.state === 'ko') banner = 'DUMMY DOWN';
+    else if (focus?.state === 'fallen') banner = 'GET UP';
+    else if (focus?.state === 'getup') banner = 'GETTING UP';
     return {
       tick: this.tick,
       time: this.time,
       lastInputSeq: this.lastInputSeq,
       banner,
-      fighters: [this.snapshotFighter(this.player), this.snapshotFighter(this.dummy)],
+      fighters: [...this.fighters.values()].map((fighter) => this.snapshotFighter(fighter)),
       solids: this.solids,
       effects: this.effects.map((effect) => ({ ...effect })),
       bounds: { minX: ARENA.minX, maxX: ARENA.maxX, minY: ARENA.minY, maxY: ARENA.maxY },
@@ -266,16 +348,16 @@ export class Simulation {
     return {
       params: this.params,
       time: this.time,
-      player: this.player,
-      dummy: this.dummy,
+      fighters: [...this.fighters.values()],
       hitsLanded: this.hits,
       effects: [] as EffectSpawn[],
     };
   }
 
-  private afterPhysics(f: Fighter, other: Fighter, dt: number): void {
+  private afterPhysics(f: Fighter, dt: number): void {
+    if (!this.fighters.has(f.id)) return;
     if (f.state === 'ko' && f.stateTime > 1.55) {
-      this.respawn(f, other);
+      this.respawn(f);
       return;
     }
     const grounded = sampleGrounded(this.world, f);
@@ -294,13 +376,14 @@ export class Simulation {
     f.coyote = grounded ? 0.12 : Math.max(0, f.coyote - dt);
     f.wasGrounded = grounded;
 
-    if (f.grabIntent > 0 && !f.grab && !f.heldBy) tryAttachGrab(this.world, f, other);
+    const target = this.grabTarget(f);
+    if (f.grabIntent > 0 && !f.grab && !f.heldBy && target) tryAttachGrab(this.world, f, target);
     if (f.grab) updateGrab(this.world, f, dt, this.params);
 
-    this.sanitize(f, other);
+    this.sanitize(f);
   }
 
-  private sanitize(f: Fighter, other: Fighter): void {
+  private sanitize(f: Fighter): void {
     let peak = 0;
     let peakW = 0;
     for (const part of PARTS) {
@@ -318,7 +401,7 @@ export class Simulation {
       ) {
         this.nanEvents += 1;
         this.rescueEvents += 1;
-        this.respawn(f, other);
+        this.respawn(f);
         return;
       }
       const speed = Math.hypot(v.x, v.y);
@@ -328,7 +411,7 @@ export class Simulation {
     const sep = f.maxSeparation();
     if (!Number.isFinite(sep) || sep > 0.45) {
       this.rescueEvents += 1;
-      this.respawn(f, other);
+      this.respawn(f);
       return;
     }
     if (sep > this.maxJointSeparation) {
@@ -339,20 +422,22 @@ export class Simulation {
     if (peakW > this.peakAngular) this.peakAngular = peakW;
 
     const torso = f.bodies.torso.getPosition();
-    if (torso.y < -3 || torso.y > 16 || torso.x < -14 || torso.x > 14) this.respawn(f, other);
+    if (torso.y < -3 || torso.y > 16 || torso.x < -14 || torso.x > 14) this.respawn(f);
   }
 
-  private respawn(f: Fighter, other: Fighter): void {
+  private respawn(f: Fighter): void {
+    if (!this.fighters.has(f.id)) return;
     this.breakGrabs(f);
-    const home = f.id === 'player' ? this.spawnPlayer : this.spawnDummy;
-    const alt = f.id === 'player' ? this.spawnDummy : this.spawnPlayer;
-    const otherX = other.bodies.torso.getPosition().x;
-    const x = Math.abs(otherX - home) >= 1.25 ? home : alt;
+    const others = [...this.fighters.values()]
+      .filter((other) => other !== f)
+      .map((other) => other.bodies.torso.getPosition().x);
+    const homeClear = others.every((x) => Math.abs(x - f.spawnX) >= 1.25);
+    const x = homeClear ? f.spawnX : chooseSpawn(others);
     f.place(x);
     f.hp = MAX_HP;
     f.spawnProtect = this.spawnProtectDuration;
-    const ox = other.bodies.torso.getPosition().x;
-    f.facing = ox >= x ? 1 : -1;
+    const nearest = others.length === 0 ? x + 1 : others.reduce((best, value) => (Math.abs(value - x) < Math.abs(best - x) ? value : best));
+    f.facing = nearest >= x ? 1 : -1;
     this.respawns += 1;
   }
 
@@ -423,13 +508,14 @@ export class Simulation {
       protecting: f.spawnProtect > 0,
       flash: f.flash,
       headAngle: f.bodies.head.getAngle(),
+      color: f.color,
       parts: PARTS.map((part) => poseOf(f.bodies[part], part)),
       points: pointsOf(f),
     };
   }
 
   private capVelocities(count: boolean): void {
-    for (const f of [this.player, this.dummy]) {
+    for (const f of this.fighters.values()) {
       for (const part of PARTS) {
         const body = f.bodies[part];
         const v = body.getLinearVelocity();
@@ -449,7 +535,44 @@ export class Simulation {
   }
 
   private byId(id: FighterId): Fighter {
-    return id === 'player' ? this.player : this.dummy;
+    return this.must(id);
+  }
+
+  private must(id: string): Fighter {
+    const fighter = this.fighters.get(id);
+    if (!fighter) throw new Error(`missing fighter ${id}`);
+    return fighter;
+  }
+
+  private flush(): void {
+    const jobs = this.pending.splice(0);
+    for (const job of jobs) job();
+  }
+
+  private spawnAt(id: string, name: string, color: number, x: number, facing: 1 | -1): void {
+    if (this.fighters.has(id)) return;
+    const group = -this.nextGroup;
+    this.nextGroup += 1;
+    this.fighters.set(id, new Fighter(this.world, id, x, facing, this.spawnProtectDuration, group, name, color));
+  }
+
+  private grabTarget(f: Fighter): Fighter | null {
+    const aim = f.lastInput;
+    const len = Math.hypot(aim.aimX, aim.aimY) || 1;
+    const dx = aim.aimX / len;
+    const dy = aim.aimY / len;
+    const origin = f.bodies.torso.getPosition();
+    let best: { fighter: Fighter; dist: number } | null = null;
+    for (const other of this.fighters.values()) {
+      if (other === f) continue;
+      const pos = other.bodies.torso.getPosition();
+      const ox = pos.x - origin.x;
+      const oy = pos.y - origin.y;
+      const dist = Math.hypot(ox, oy);
+      const dot = (ox * dx + oy * dy) / (dist || 1);
+      if (dist < 2.4 && dot > 0.1 && (!best || dist < best.dist)) best = { fighter: other, dist };
+    }
+    return best?.fighter ?? null;
   }
 }
 

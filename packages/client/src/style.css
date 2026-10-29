@@ -238,6 +238,50 @@ button:hover, summary:hover { border-color: rgba(231, 177, 90, 0.7); }
 
 .touch-left, .touch-right { display: flex; flex-wrap: wrap; gap: 6px; max-width: 46%; }
 
+.gate {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 7, 8, 0.72);
+  z-index: 4;
+  pointer-events: auto;
+}
+
+.gate[hidden] { display: none; }
+
+.gate form, .lobby-card {
+  width: min(440px, calc(100% - 32px));
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  background: rgba(18, 12, 14, 0.94);
+  border: 1px solid var(--line);
+}
+
+.gate h2 { margin: 0; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.gate label { display: grid; gap: 4px; color: var(--muted); font-size: 0.8rem; }
+
+.gate input[type='text'], .gate input:not([type='checkbox']) {
+  background: #0e0b0c;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.gate-row, .check { display: flex; gap: 8px; align-items: center; }
+
+.gate-error { margin: 0; color: #ff8d72; }
+
+.lobby-card { pointer-events: auto; width: min(360px, 100%); margin-top: 8px; }
+.lobby-card[hidden] { display: none; }
+.lobby-card p { margin: 0; }
+.join-url { color: var(--muted); font-size: 0.75rem; word-break: break-all; }
+#lobby-list { margin: 0; padding-left: 18px; }
+#host-tag { color: var(--amber); letter-spacing: 0.08em; font-size: 0.72rem; }
+
 .boot-error[hidden] { display: none; }
 
 .boot-error {

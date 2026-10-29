@@ -18,6 +18,9 @@ export default defineConfig({
     port: 4317,
     strictPort: true,
     fs: { allow: [path.resolve(dir, '../..')] },
+    proxy: {
+      '/socket.io': { target: 'http://127.0.0.1:4318', ws: true },
+    },
   },
   build: {
     outDir: 'dist',
