@@ -103,6 +103,15 @@
             <button type="button" id="start-match">Start match</button>
           </div>
         </div>
+        <button type="button" id="skip-replay" hidden>Skip replay</button>
+        <details id="settings">
+          <summary>Settings</summary>
+          <label>Volume <input id="volume" type="range" min="0" max="100" value="70" /></label>
+          <label class="check"><input id="shake-toggle" type="checkbox" checked /> Screen shake</label>
+          <label class="check"><input id="reduce-motion" type="checkbox" /> Reduced motion</label>
+          <label class="check"><input id="reduce-flash" type="checkbox" /> Reduced flash</label>
+          <label class="check"><input id="no-jumpscares" type="checkbox" /> Opt out of jumpscares</label>
+        </details>
         <details id="tune">
           <summary>Balance tuning</summary>
           <div id="sliders" class="sliders"></div>

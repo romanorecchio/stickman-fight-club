@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import type { FighterSnapshot, InputFrame, LobbyState, NetSnapshot, RoomError, Welcome } from '@sfc/shared';
+import type { FighterSnapshot, InputFrame, LobbyState, NetSnapshot, RoomError, Snapshot, Welcome } from '@sfc/shared';
 import { Predictor } from './predict.js';
 
 export interface OnlineHooks {
@@ -9,6 +9,7 @@ export interface OnlineHooks {
   onLeft: () => void;
   onAccount?: (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => void;
   onBoard?: (rows: BoardRow[]) => void;
+  onReplay?: (frames: Snapshot[]) => void;
 }
 
 export interface AccountProfile {
@@ -70,6 +71,7 @@ export class OnlineSession {
     this.socket.on('left', () => this.hooks.onLeft());
     this.socket.on('account', (payload: { error?: string; token?: string; profile?: AccountProfile | null }) => this.hooks.onAccount?.(payload));
     this.socket.on('board', (rows: BoardRow[]) => this.hooks.onBoard?.(rows));
+    this.socket.on('replay', (frames: Snapshot[]) => this.hooks.onReplay?.(frames));
     this.socket.on('pong', (sent: number) => {
       if (typeof sent === 'number') this.rtt = Math.max(1, Date.now() - sent);
     });

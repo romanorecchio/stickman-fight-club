@@ -83,6 +83,23 @@ describe('lobby rules', () => {
     }
     expect(limited).toBe(true);
   });
+
+  it('sends a kill replay after an elimination death', () => {
+    const directory = new MatchDirectory();
+    const host = directory.create('Ada', 1_000);
+    const guest = directory.join('welcome' in host ? host.welcome.code : '', 'Bea', 1_000);
+    if (!('welcome' in host) || !('welcome' in guest)) throw new Error('lobby');
+    directory.updateSettings(host.welcome.token, { elimination: true, scoreLimit: 20, roundSeconds: 60, weapons: false });
+    expect(directory.startMatch(host.welcome.token)).toBeNull();
+    for (let i = 0; i < 220; i += 1) directory.pump(1_000 + (i + 1) * 20);
+    let replays = 0;
+    directory.onReplay(() => {
+      replays += 1;
+    });
+    directory.forceHp(host.welcome.code, guest.playerId, 0, host.playerId);
+    directory.pump(1_000 + 221 * 20);
+    expect(replays).toBe(1);
+  });
 });
 
 describe('socket rooms', () => {

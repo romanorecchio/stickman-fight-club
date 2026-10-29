@@ -67,6 +67,9 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
   directory.onSnapshot((code, snap) => {
     later(() => io.to(code).emit('snapshot', snap satisfies NetSnapshot));
   });
+  directory.onReplay((code, frames) => {
+    io.to(code).emit('replay', frames);
+  });
 
   io.on('connection', (socket) => {
     let token = '';
@@ -151,6 +154,10 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
     });
     socket.on('leaderboard', () => {
       socket.emit('board', accounts?.leaderboard() ?? []);
+    });
+    socket.on('prefs', (body: unknown) => {
+      if (!token) return;
+      directory.setPrefs(token, body);
     });
     socket.on('team', (body: { team?: 'red' | 'blue' | 'none' }) => {
       if (!token) return;

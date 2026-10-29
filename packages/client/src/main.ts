@@ -1,6 +1,6 @@
 import { DEFAULT_BALANCE, FIXED_DT, sanitizeBalance, type BalanceParams, type FighterSnapshot, type Snapshot } from '@sfc/shared';
 import { Simulation } from '@sfc/sim';
-import { isMuted, playEffect, setMuted } from './audio.js';
+import { isMuted, playEffect, setMuted, setVolume } from './audio.js';
 import { buildInput, consumePress, installInput, pointer } from './input.js';
 import { OnlineSession, type AccountProfile, type BoardRow } from './net.js';
 import { createCamera, drawFrame, interpolate, updateCamera, worldPoint, type View } from './render.js';
@@ -25,6 +25,11 @@ let last = performance.now();
 let seq = 1;
 let paused = false;
 let debug = false;
+let replay: Snapshot[] | null = null;
+let replayIndex = 0;
+let replayAcc = 0;
+let reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let reduceFlash = false;
 let shake = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const heard = new Set<number>();
 let fps = 60;
@@ -59,7 +64,10 @@ function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   fps += (1 / Math.max(dt, 0.001) - fps) * 0.08;
-  if (consumePress('Escape')) togglePause();
+  if (consumePress('Escape')) {
+    if (replay) replay = null;
+    else togglePause();
+  }
   if (consumePress('F3')) debug = !debug;
 
   if (mode === 'training' && !paused) {
@@ -87,12 +95,32 @@ function frame(now: number): void {
       noteEffects(display);
     }
   }
-  const focusId = mode === 'online' ? spectateFocus(curr) : 'player';
-  updateCamera(camera, curr, dt, view, shake, focusId);
-  const alpha = mode === 'online' || paused ? 1 : acc / FIXED_DT;
-  drawFrame(ctx!, mode === 'online' ? curr : interpolate(prev, curr, alpha), camera, view, debug, now);
+  const shown = replayFrame(dt) ?? curr;
+  if (reduceFlash) for (const fighter of shown.fighters) fighter.flash = 0;
+  const focusId = mode === 'online' ? spectateFocus(shown) : 'player';
+  updateCamera(camera, shown, dt, view, shake && !reduceMotion, focusId);
+  const alpha = mode === 'online' || paused || replay ? 1 : acc / FIXED_DT;
+  drawFrame(ctx!, mode === 'online' || replay ? shown : interpolate(prev, curr, alpha), camera, view, debug, now);
   paintHud(curr);
   requestAnimationFrame(frame);
+}
+
+function replayFrame(dt: number): Snapshot | null {
+  if (!replay || replay.length === 0) return null;
+  replayAcc += dt;
+  const step = reduceMotion ? 0.08 : 0.1;
+  while (replayAcc > step && replayIndex < replay.length - 1) {
+    replayAcc -= step;
+    replayIndex += 1;
+  }
+  const skip = document.querySelector<HTMLElement>('#skip-replay');
+  if (skip) skip.hidden = false;
+  if (replayIndex >= replay.length - 1 && replayAcc > 0.4) {
+    replay = null;
+    if (skip) skip.hidden = true;
+    return null;
+  }
+  return replay[replayIndex] ?? null;
 }
 
 function composeOnline(): Snapshot | null {
@@ -214,7 +242,8 @@ function paintHud(snap: Snapshot): void {
   const stability = sim.getStability();
   if (stats) {
     const ping = mode === 'online' && online ? ` · ${Math.round(online.rtt)} ms` : '';
-    stats.textContent = `${Math.round(fps)} fps${ping} · ${snap.fighters.length} fighters · joint ${stability.maxJointSeparation.toFixed(3)} m`;
+    const dev = debug ? ` · tick ${snap.tick} · bodies ${snap.solids.length + snap.fighters.length * 14}` : '';
+    stats.textContent = `${Math.round(fps)} fps${ping} · ${snap.fighters.length} fighters${dev} · joint ${stability.maxJointSeparation.toFixed(3)} m`;
   }
 }
 
@@ -267,6 +296,55 @@ function resetRound(): void {
 
 function bindHud(): void {
   document.querySelector('#pause-btn')?.addEventListener('click', togglePause);
+  document.querySelector('#skip-replay')?.addEventListener('click', () => {
+    replay = null;
+    const skip = document.querySelector<HTMLElement>('#skip-replay');
+    if (skip) skip.hidden = true;
+  });
+  const volume = document.querySelector<HTMLInputElement>('#volume');
+  const motion = document.querySelector<HTMLInputElement>('#reduce-motion');
+  const flash = document.querySelector<HTMLInputElement>('#reduce-flash');
+  const scare = document.querySelector<HTMLInputElement>('#no-jumpscares');
+  const shakeToggle = document.querySelector<HTMLInputElement>('#shake-toggle');
+  try {
+    const saved = JSON.parse(localStorage.getItem('sfc-settings') ?? '{}') as {
+      volume?: number;
+      shake?: boolean;
+      reduceMotion?: boolean;
+      reduceFlash?: boolean;
+      jumpscares?: boolean;
+    };
+    if (typeof saved.volume === 'number' && volume) volume.value = String(saved.volume);
+    if (typeof saved.shake === 'boolean') {
+      shake = saved.shake;
+      if (shakeToggle) shakeToggle.checked = saved.shake;
+    }
+    if (saved.reduceMotion) reduceMotion = true;
+    if (saved.reduceFlash) reduceFlash = true;
+  } catch {
+    // ignore broken settings
+  }
+  const pushPrefs = () => {
+    reduceMotion = motion?.checked === true || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    reduceFlash = flash?.checked === true;
+    shake = shakeToggle?.checked !== false && !reduceMotion;
+    setVolume(Number(volume?.value ?? 70) / 100);
+    const prefs = {
+      jumpscares: scare?.checked !== true,
+      reduceMotion,
+      reduceFlash,
+    };
+    localStorage.setItem('sfc-settings', JSON.stringify({ volume: Number(volume?.value ?? 70), shake, ...prefs }));
+    online?.emit('prefs', prefs);
+  };
+  setVolume(Number(volume?.value ?? 70) / 100);
+  if (motion) motion.checked = reduceMotion;
+  if (flash) flash.checked = reduceFlash;
+  if (shakeToggle) shakeToggle.checked = shake;
+  for (const input of [volume, motion, flash, scare, shakeToggle]) {
+    input?.addEventListener('input', pushPrefs);
+    input?.addEventListener('change', pushPrefs);
+  }
   document.querySelector('#reset-btn')?.addEventListener('click', resetRound);
   const mute = document.querySelector<HTMLButtonElement>('#mute-btn');
   mute?.addEventListener('click', () => {
@@ -491,6 +569,12 @@ function ensureOnline(): void {
     onLeft: () => showGate(),
     onAccount: showAccount,
     onBoard: showBoard,
+    onReplay: (frames) => {
+      if (frames.length < 2) return;
+      replay = frames;
+      replayIndex = 0;
+      replayAcc = 0;
+    },
   });
 }
 

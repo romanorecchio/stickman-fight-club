@@ -14,6 +14,7 @@ import {
   type LobbyState,
   type NetSnapshot,
   type RoomError,
+  type Snapshot,
   type Welcome,
 } from '@sfc/shared';
 import { MatchRules, type Loadout, type TeamId } from '@sfc/shared';
@@ -45,6 +46,7 @@ interface Slot {
   userId: number | null;
   hat: string;
   face: string;
+  prefs: { jumpscares: boolean; reduceMotion: boolean; reduceFlash: boolean };
 }
 
 interface Room {
@@ -55,6 +57,8 @@ interface Room {
   hostId: string;
   startedAt: number;
   statsSaved: boolean;
+  history: Snapshot[];
+  deathsSeen: number;
   slots: Map<string, Slot>;
   joinCounter: number;
   acc: number;
@@ -66,6 +70,7 @@ export class MatchDirectory {
   private readonly tokens = new Map<string, { code: string; id: string }>();
   private timer: NodeJS.Timeout | null = null;
   private listener: ((code: string, snap: NetSnapshot) => void) | null = null;
+  private replayListener: ((code: string, frames: Snapshot[]) => void) | null = null;
   private readonly graceMs: number;
   private readonly maxPlayers: number;
   private readonly accounts: Accounts | null;
@@ -78,6 +83,25 @@ export class MatchDirectory {
 
   onSnapshot(listener: (code: string, snap: NetSnapshot) => void): void {
     this.listener = listener;
+  }
+
+  onReplay(listener: (code: string, frames: Snapshot[]) => void): void {
+    this.replayListener = listener;
+  }
+
+  forceHp(code: string, id: string, hp: number, attacker: string): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    room.sim.setFighterHp(id, hp, room.match.settings.startingHp, attacker);
+  }
+
+  setPrefs(token: string, raw: unknown): void {
+    const slot = this.slotFor(token);
+    if (!slot || !raw || typeof raw !== 'object') return;
+    const body = raw as Partial<Slot['prefs']>;
+    if (typeof body.jumpscares === 'boolean') slot.prefs.jumpscares = body.jumpscares;
+    if (typeof body.reduceMotion === 'boolean') slot.prefs.reduceMotion = body.reduceMotion;
+    if (typeof body.reduceFlash === 'boolean') slot.prefs.reduceFlash = body.reduceFlash;
   }
 
   codeFor(token: string): string | null {
@@ -279,6 +303,12 @@ export class MatchDirectory {
           room.sim.respawnFighter(id);
         }
         room.sim.markInfected(room.match.infected);
+        const deaths = [...room.match.deaths.values()].reduce((sum, value) => sum + value, 0);
+        const replayMode = room.match.settings.elimination || room.match.settings.mode === 'duel';
+        if (replayMode && deaths > room.deathsSeen && room.history.length > 0) {
+          this.replayListener?.(room.code, room.history.map((frame) => ({ ...frame, fighters: frame.fighters.map((fighter) => ({ ...fighter })) })));
+        }
+        room.deathsSeen = deaths;
         if (room.match.phase === 'matchEnd' && !room.statsSaved) {
           room.statsSaved = true;
           this.saveStats(room);
@@ -286,6 +316,9 @@ export class MatchDirectory {
         room.acc -= FIXED_DT;
         steps += 1;
         if (room.sim.tick % SNAPSHOT_STRIDE === 0) {
+          const sample = room.sim.getSnapshot();
+          room.history.push(sample);
+          if (room.history.length > 36) room.history.shift();
           for (const slot of room.slots.values()) {
             if (!slot.connected) continue;
             const snap = this.snapshotFor(room, slot, now);
@@ -377,6 +410,7 @@ export class MatchDirectory {
       userId: who.userId,
       hat: who.loadout?.hat ?? 'none',
       face: who.loadout?.face ?? 'dot',
+      prefs: { jumpscares: true, reduceMotion: false, reduceFlash: false },
     };
     room.joinCounter += 1;
     if (!room.hostId) room.hostId = id;
@@ -465,6 +499,8 @@ export class MatchDirectory {
       hostId: '',
       startedAt: now,
       statsSaved: false,
+      history: [],
+      deathsSeen: 0,
       slots: new Map(),
       joinCounter: 0,
       acc: 0,

@@ -428,9 +428,10 @@ export class Simulation {
     return this.arsenal.pickups.length;
   }
 
-  setFighterHp(id: string, hp: number, maxHp = MAX_HP): void {
+  setFighterHp(id: string, hp: number, maxHp = MAX_HP, attacker?: string): void {
     const fighter = this.fighters.get(id);
     if (!fighter) return;
+    if (attacker) fighter.lastHurtBy = attacker;
     fighter.maxHp = maxHp;
     fighter.hp = Math.max(0, Math.min(maxHp, hp));
     if (fighter.hp <= 0 && fighter.state !== 'ko') {

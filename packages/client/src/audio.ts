@@ -1,5 +1,10 @@
 let ctx: AudioContext | null = null;
 let muted = false;
+let master = 0.7;
+
+export function setVolume(next: number): void {
+  master = Math.max(0, Math.min(1, next));
+}
 
 export function isMuted(): boolean {
   return muted;
@@ -29,7 +34,7 @@ export function thud(freq: number, seconds: number, gain: number): void {
   osc.type = 'triangle';
   osc.frequency.setValueAtTime(freq, t);
   osc.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 0.35), t + seconds);
-  amp.gain.setValueAtTime(gain, t);
+  amp.gain.setValueAtTime(gain * master, t);
   amp.gain.exponentialRampToValueAtTime(0.0001, t + seconds);
   osc.connect(amp);
   amp.connect(audio.destination);
