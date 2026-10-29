@@ -36,7 +36,7 @@ export function openPanel(session: OnlineSession, effects: EffectRow[]): void {
   const style = document.createElement('style');
   style.textContent = `
     #owner-panel { position: fixed; right: 16px; bottom: 16px; z-index: 6; width: min(360px, calc(100% - 24px)); background: #100608; color: #f3ecdf; border: 1px solid #ff5d3a; padding: 12px; display: grid; gap: 8px; font: 14px "DejaVu Sans", sans-serif; }
-    #owner-panel[hidden] { display: none; }
+    #owner-panel[hidden], #owner-panel [hidden] { display: none; }
     #owner-panel header, #owner-panel form, #owner-panel [data-tools] { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     #owner-panel button, #owner-panel input { font: inherit; background: #1a0c10; color: inherit; border: 1px solid #ff5d3a; padding: 4px 8px; }
     #owner-panel [data-list] { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; max-height: 40vh; overflow: auto; }
@@ -74,17 +74,37 @@ export function openPanel(session: OnlineSession, effects: EffectRow[]): void {
       button.textContent = effect.name;
       button.addEventListener('click', () => {
         if (!unlocked) return;
-        const seconds = Number(panel?.querySelector<HTMLInputElement>('[data-seconds]')?.value ?? 4);
-        const intensity = Number(panel?.querySelector<HTMLInputElement>('[data-intensity]')?.value ?? 70);
-        const who = panel?.querySelector<HTMLInputElement>('[data-targets]')?.value ?? 'all';
-        const targets = who.trim() === 'all' ? 'all' : who.split(',').map((id) => id.trim()).filter(Boolean);
-        session.emit('chaos', {
-          account: localStorage.getItem('sfc-account'),
-          effect: effect.id,
-          duration: seconds,
-          intensity,
-          targets,
+        const send = (image?: string) => {
+          const seconds = Number(panel?.querySelector<HTMLInputElement>('[data-seconds]')?.value ?? 4);
+          const intensity = Number(panel?.querySelector<HTMLInputElement>('[data-intensity]')?.value ?? 70);
+          const who = panel?.querySelector<HTMLInputElement>('[data-targets]')?.value ?? 'all';
+          const targets = who.trim() === 'all' ? 'all' : who.split(',').map((id) => id.trim()).filter(Boolean);
+          session.emit('chaos', {
+            account: localStorage.getItem('sfc-account'),
+            effect: effect.id,
+            duration: seconds,
+            intensity,
+            targets,
+            image,
+          });
+        };
+        if (effect.id !== 'custom') {
+          send();
+          return;
+        }
+        const picker = document.createElement('input');
+        picker.type = 'file';
+        picker.accept = 'image/png,image/jpeg';
+        picker.addEventListener('change', () => {
+          const file = picker.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (typeof reader.result === 'string') send(reader.result);
+          };
+          reader.readAsDataURL(file);
         });
+        picker.click();
       });
       list.append(button);
     }

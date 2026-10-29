@@ -96,6 +96,7 @@ export class OnlineSession {
   }
 
   emit(event: string, body?: unknown): void {
+    this.connect();
     this.socket?.emit(event, body);
   }
 

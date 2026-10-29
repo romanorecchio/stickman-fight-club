@@ -245,6 +245,9 @@ function paintHud(snap: Snapshot): void {
     banner.hidden = !snap.banner;
     banner.textContent = snap.banner ?? '';
   }
+    const card = document.querySelector<HTMLElement>('#lobby-card');
+  const matchPhase = snap.match?.phase;
+  if (card && matchPhase) card.hidden = matchPhase === 'countdown' || matchPhase === 'fight' || matchPhase === 'roundEnd';
   const board = document.querySelector<HTMLElement>('#scoreboard');
   if (board) {
     const match = snap.match;
