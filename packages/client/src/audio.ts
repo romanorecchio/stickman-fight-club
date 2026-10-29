@@ -41,4 +41,5 @@ export function playEffect(kind: string, mag: number): void {
   if (kind === 'hit') thud(140 + mag * 40, 0.09, 0.08);
   else if (kind === 'block') thud(90, 0.06, 0.04);
   else if (kind === 'throw') thud(70, 0.14, 0.07);
+  else if (kind === 'boom') thud(55 + mag * 8, 0.22, 0.12);
 }

@@ -53,6 +53,37 @@ describe('match rules', () => {
     expect(match.winnerName).toBe('Ada');
   });
 
+  it('infection converts a downed survivor and sends them back in', () => {
+    const cam = { id: 'c', name: 'Cam', hp: 100, state: 'idle', x: 4, y: 1 };
+    const match = new MatchRules();
+    match.queueSettings({ mode: 'infection', roundSeconds: 40, scoreLimit: 50 });
+    match.start([ada, bea, cam]);
+    expect(match.infected.has('a')).toBe(true);
+    expect(match.infected.has('b')).toBe(false);
+    match.tick(3, [ada, bea, cam]);
+    match.noteAttacker('b', 'a');
+    const down = { ...bea, hp: 0, state: 'ko' as const };
+    match.tick(0.02, [ada, down, cam]);
+    expect(match.infected.has('b')).toBe(true);
+    let respawned = false;
+    for (let i = 0; i < 80; i += 1) {
+      if (match.tick(0.02, [ada, down, cam]).respawn.includes('b')) respawned = true;
+    }
+    expect(respawned).toBe(true);
+    expect(match.phase).toBe('fight');
+  });
+
+  it('king of the hill scores the uncontested fighter in the zone', () => {
+    const match = new MatchRules();
+    match.queueSettings({ mode: 'koth', scoreLimit: 50, roundSeconds: 30 });
+    match.start([ada, bea]);
+    match.tick(3, [ada, bea]);
+    match.tick(2, [ada, { ...bea, x: 6 }]);
+    const row = match.view().rows.find((item) => item.id === 'a');
+    expect(row?.score ?? 0).toBeGreaterThan(1);
+    expect(match.view().hill?.ownerId).toBe('a');
+  });
+
   it('team scores ignore friendly fire bookkeeping when the attacker is a teammate', () => {
     const match = new MatchRules();
     match.queueSettings({ mode: 'tdm', friendlyFire: false });

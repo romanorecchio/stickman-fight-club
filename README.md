@@ -35,6 +35,9 @@ npm start         # serve the built server (set STATIC_DIR to also serve the pag
 | Space | Kick |
 | E | Grab |
 | Q | Throw |
+| F | Pick up or swap a weapon |
+| R | Reload |
+| G | Drop the weapon |
 | Esc | Pause |
 | F3 | Fixture debug |
 
@@ -50,4 +53,4 @@ On a touch screen, the on-screen buttons drive the same actions. Balance sliders
 
 ## Limits right now
 
-Free-for-all, team deathmatch, and duels score kills, respawn (or eliminate), and show a scoreboard. Accounts, weapons, and the other maps are not in yet. Rooms vanish when the process stops. A hard hit can stretch a joint for a single frame; the solver closes it. Grab is one distance joint. See [docs/DEPLOY.md](docs/DEPLOY.md) to put this on a public URL. That deploy has not been done from this workspace.
+Free-for-all, team deathmatch, and duels score kills, respawn (or eliminate), and show a scoreboard. The host picks the mode (free-for-all, teams, duels, infection, or king of the hill), the map, and the weapon classes. Late joiners can spectate, jump in, or be turned away. Press C while spectating to switch who you follow. F picks up, R reloads, G drops. Accounts are not in yet. Rooms vanish when the process stops. A hard hit can stretch a joint for a single frame; the solver closes it. Grab is one distance joint. See [docs/DEPLOY.md](docs/DEPLOY.md) to put this on a public URL. That deploy has not been done from this workspace.

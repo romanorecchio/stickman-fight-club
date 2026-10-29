@@ -14,6 +14,10 @@ export interface InputFrame {
   block: boolean;
   grab: boolean;
   throw: boolean;
+  /** Edge-triggered. Optional so older frames still parse. */
+  reload?: boolean;
+  pickup?: boolean;
+  drop?: boolean;
   /** World-space aim vector. Magnitude is ignored. Y is up. */
   aimX: number;
   aimY: number;
@@ -53,11 +57,15 @@ export interface FighterSnapshot {
   headAngle: number;
   /** Palette index. Training: 0 you, 1 dummy. */
   color: number;
+  weapon: string | null;
+  ammo: number;
+  reserve: number;
+  infected: boolean;
   parts: PartPose[];
   points: Record<PointName, Vec2>;
 }
 
-export type SolidKind = 'ground' | 'wall' | 'platform' | 'crate';
+export type SolidKind = 'ground' | 'wall' | 'platform' | 'crate' | 'barrel' | 'rope' | 'rubble';
 
 export interface SolidSnapshot {
   x: number;
@@ -67,7 +75,7 @@ export interface SolidSnapshot {
   kind: SolidKind;
 }
 
-export type EffectKind = 'hit' | 'block' | 'throw' | 'text';
+export type EffectKind = 'hit' | 'block' | 'throw' | 'text' | 'boom';
 
 export interface EffectSnapshot {
   id: number;
@@ -82,6 +90,28 @@ export interface EffectSnapshot {
   text: string;
 }
 
+export interface PickupSnapshot {
+  id: number;
+  weapon: string;
+  x: number;
+  y: number;
+}
+
+export interface ProjectileSnapshot {
+  id: number;
+  weapon: string;
+  x: number;
+  y: number;
+}
+
+export interface HazardSnapshot {
+  kind: string;
+  x: number;
+  y: number;
+  hx: number;
+  hy: number;
+}
+
 export interface Snapshot {
   tick: number;
   time: number;
@@ -91,6 +121,11 @@ export interface Snapshot {
   solids: SolidSnapshot[];
   effects: EffectSnapshot[];
   bounds: { minX: number; maxX: number; minY: number; maxY: number };
+  mapId: string;
+  theme: string;
+  pickups: PickupSnapshot[];
+  projectiles: ProjectileSnapshot[];
+  hazards: HazardSnapshot[];
   match?: MatchView | null;
 }
 
@@ -106,6 +141,9 @@ export function emptyInput(seq = 0, aimX = 1, aimY = 0): InputFrame {
     block: false,
     grab: false,
     throw: false,
+    reload: false,
+    pickup: false,
+    drop: false,
     aimX,
     aimY,
   };

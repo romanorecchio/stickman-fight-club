@@ -15,6 +15,7 @@ export interface LobbyPlayer {
   host: boolean;
   connected: boolean;
   color: number;
+  team: 'red' | 'blue' | 'none';
 }
 
 export interface LobbyState {
@@ -84,6 +85,9 @@ export function sanitizeInput(raw: unknown, lastSeq: number): InputFrame | null 
     block: frame.block === true,
     grab: frame.grab === true,
     throw: frame.throw === true,
+    reload: frame.reload === true,
+    pickup: frame.pickup === true,
+    drop: frame.drop === true,
     aimX: Number.isFinite(aimX) ? clamp(aimX, -40, 40) : 1,
     aimY: Number.isFinite(aimY) ? clamp(aimY, -40, 40) : 0,
   };

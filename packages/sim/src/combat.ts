@@ -1,5 +1,5 @@
 import { DistanceJoint, World, type Body } from 'planck';
-import { clamp, type BalanceParams, type EffectKind, type FighterId, type PartName } from '@sfc/shared';
+import { clamp, weaponById, type BalanceParams, type EffectKind, type FighterId, type PartName } from '@sfc/shared';
 import type { Fighter, UserData } from './fighter.js';
 
 export interface QueuedHit {
@@ -241,6 +241,10 @@ function connect(
   const loc = part === 'head' ? 1.45 : part === 'torso' ? 1 : 0.62;
   let damage = (strike === 'kick' ? 16 : 12) * power * loc * ctx.params.damageScale;
   if (blocked) damage *= 0.22;
+  const armed = weaponById(attacker.weaponId);
+  if (armed?.kind === 'swing') damage *= 0.25;
+  else if (armed) damage *= 0.15;
+  if (weaponById(victim.weaponId)?.id === 'shield' && fromFront) damage *= blocked ? 0.4 : 0.7;
   damage = clamp(damage, 0, 22 * ctx.params.damageScale);
 
   let kx = vx - ax;
@@ -380,6 +384,7 @@ function byId(ctx: CombatContext, id: FighterId): Fighter | undefined {
 }
 
 function footFrictionFor(fighter: Fighter, planted: number): number {
+  if (fighter.slipLeft > 0) return 0.06;
   if (fighter.state === 'fallen' || fighter.state === 'ko') return 0.35;
   if (fighter.state === 'walk' || fighter.state === 'sprint' || fighter.state === 'air' || fighter.state === 'stumble') {
     return 0.48;

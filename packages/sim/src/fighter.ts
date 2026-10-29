@@ -34,7 +34,7 @@ import {
 
 export type UserData =
   | { kind: 'fighter'; id: FighterId; part: PartName }
-  | { kind: 'world'; surface: 'ground' | 'wall' | 'platform' | 'crate' };
+  | { kind: 'world'; surface: 'ground' | 'wall' | 'platform' | 'crate' | 'rope' | 'rubble' | 'barrel' };
 
 export interface GrabState {
   joint: DistanceJoint;
@@ -87,6 +87,16 @@ export class Fighter {
   lastInput: InputFrame;
   envCooldown = 0;
   lastHurtBy: string | null = null;
+  weaponId: string | null = null;
+  ammo = 0;
+  reserve = 0;
+  fireCd = 0;
+  reloadLeft = 0;
+  slipLeft = 0;
+  pulling: string | null = null;
+  infected = false;
+  moveScale = 1;
+  maxHp = 100;
   readonly color: number;
 
   constructor(

@@ -96,6 +96,9 @@ export function buildInput(seq: number, aim: Vec2): InputFrame {
     block: holds.block,
     grab: keys.has('KeyE') || holds.grab,
     throw: keys.has('KeyQ') || holds.throw,
+    reload: consumePress('KeyR'),
+    pickup: consumePress('KeyF'),
+    drop: consumePress('KeyG'),
     aimX: aim.x,
     aimY: aim.y,
   };

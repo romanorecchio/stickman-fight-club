@@ -46,6 +46,7 @@ interface Room {
   code: string;
   sim: Simulation;
   match: MatchRules;
+  mapId: string;
   hostId: string;
   slots: Map<string, Slot>;
   joinCounter: number;
@@ -105,6 +106,9 @@ export class MatchDirectory {
     const room = this.rooms.get(code);
     if (!room) return { code: 'not_found', message: 'No lobby with that code.' };
     if (this.occupants(room) >= this.maxPlayers) return { code: 'full', message: 'That lobby is full (8 fighters).' };
+    if (room.match.phase !== 'lobby' && room.match.settings.lateJoin === 'closed') {
+      return { code: 'closed', message: 'That match is not taking new fighters.' };
+    }
     return this.takeSlot(room, name, now);
   }
 
@@ -173,6 +177,7 @@ export class MatchDirectory {
     if (!room || !slot) return { code: 'token', message: 'You are not in a lobby.' };
     if (room.hostId !== slot.id) return { code: 'closed', message: 'Only the host can change settings.' };
     room.match.queueSettings(raw);
+    if (room.match.phase === 'lobby') this.ensureMap(room);
     return null;
   }
 
@@ -181,6 +186,7 @@ export class MatchDirectory {
     const slot = this.slotFor(token);
     if (!room || !slot) return { code: 'token', message: 'You are not in a lobby.' };
     if (room.hostId !== slot.id) return { code: 'closed', message: 'Only the host can start.' };
+    this.ensureMap(room);
     const roster = [...room.slots.values()].filter((item) => item.connected).map((item) => ({ id: item.id, name: item.name }));
     const problem = room.match.start(roster);
     if (problem) return { code: 'closed', message: problem };
@@ -188,7 +194,16 @@ export class MatchDirectory {
       room.sim.setFighterHp(item.id, room.match.settings.startingHp);
       room.sim.respawnFighter(item.id);
     }
+    room.sim.deployWeapons(room.match.settings.weapons, room.match.settings.categories);
     return null;
+  }
+
+  private ensureMap(room: Room): void {
+    const id = room.match.settings.map;
+    if (room.mapId === id) return;
+    room.mapId = id;
+    room.sim = new Simulation({ roster: 'empty', ai: false, seed: randomInt(1, 1_000_000), mapId: id });
+    for (const slot of room.slots.values()) room.sim.addFighter(slot.id, slot.name, slot.color);
   }
 
   assignTeam(token: string, team: TeamId): RoomError | null {
@@ -244,6 +259,7 @@ export class MatchDirectory {
           room.sim.setFighterHp(id, room.match.settings.startingHp);
           room.sim.respawnFighter(id);
         }
+        room.sim.markInfected(room.match.infected);
         room.acc -= FIXED_DT;
         steps += 1;
         if (room.sim.tick % SNAPSHOT_STRIDE === 0) {
@@ -310,6 +326,12 @@ export class MatchDirectory {
     if (!room.hostId) room.hostId = id;
     room.slots.set(id, slot);
     room.sim.addFighter(id, name, color);
+    if (room.match.phase !== 'lobby' && room.match.settings.lateJoin === 'spectate') room.match.spectators.add(id);
+    if (room.match.phase === 'fight' && room.match.settings.lateJoin === 'now') {
+      room.match.alive.add(id);
+      room.match.lastHp.set(id, room.match.settings.startingHp);
+      if (room.match.settings.mode === 'tdm' || room.match.settings.mode === 'koth') room.match.autoTeam(id);
+    }
     this.tokens.set(token, { code: room.code, id });
     room.last = now;
     return { welcome: this.welcome(room, slot), playerId: id };
@@ -340,6 +362,7 @@ export class MatchDirectory {
           host: slot.id === room.hostId,
           connected: slot.connected,
           color: slot.color,
+          team: room.match.teams.get(slot.id) ?? 'none',
         })),
     };
   }
@@ -351,8 +374,9 @@ export class MatchDirectory {
   private blankRoom(code: string, now: number): Room {
     return {
       code,
-      sim: new Simulation({ roster: 'empty', ai: false, seed: randomInt(1, 1_000_000) }),
+      sim: new Simulation({ roster: 'empty', ai: false, seed: randomInt(1, 1_000_000), mapId: 'classic' }),
       match: new MatchRules(),
+      mapId: 'classic',
       hostId: '',
       slots: new Map(),
       joinCounter: 0,

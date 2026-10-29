@@ -13,14 +13,19 @@ import {
   type PartName,
   type PartPose,
   type PointName,
+  type MapDef,
   type Snapshot,
   type Vec2,
+  type WeaponCategories,
+  mapById,
   sanitizeBalance,
   DEFAULT_BALANCE,
 } from '@sfc/shared';
 import { Settings, World, type Body } from 'planck';
 import { thinkDummy } from './ai.js';
+import { deployArsenal, freshArsenal, giveWeapon as equipWeapon, hazardTick, suppressLimb, tickArsenal, type ArsenalState } from './arsenal.js';
 import { buildArena } from './arena.js';
+import { buildLevel, solidSnaps, tickLevel, type Level, type LiveSolid } from './level.js';
 import { attachContacts, releaseGrab, resolveHits, tryAttachGrab, updateGrab, type EffectSpawn, type QueuedHit } from './combat.js';
 import { driveFighter, prepareFighter } from './controller.js';
 import { Fighter, type UserData } from './fighter.js';
@@ -34,6 +39,7 @@ export interface SimOptions {
   spawnProtect?: number;
   /** `empty` starts with nobody, for an online room. Default builds the training pair. */
   roster?: 'training' | 'empty';
+  mapId?: string;
 }
 
 export interface FighterProbe {
@@ -84,6 +90,9 @@ export class Simulation {
   private readonly spawnDummy: number;
   private readonly spawnProtectDuration: number;
   private readonly solids: Snapshot['solids'];
+  private readonly map: MapDef;
+  private readonly level: Level | null;
+  private readonly arsenal: ArsenalState;
   private readonly rng: () => number;
   private readonly hitQueue: QueuedHit[] = [];
   private effects: EffectSnapshot[] = [];
@@ -120,10 +129,19 @@ export class Simulation {
     this.spawnDummy = options.spawns?.dummy ?? ARENA.spawnDummy;
     this.spawnProtectDuration = options.spawnProtect ?? 0.7;
     this.rng = mulberry32(options.seed ?? 1);
+    this.map = mapById(options.mapId ?? 'classic');
+    this.arsenal = freshArsenal();
+    this.arsenal.points = this.map.weaponPoints;
     Settings.maxLinearCorrection = 0.4;
     this.world = new World({ gravity: { x: 0, y: this.params.gravity } });
     this.world.setAllowSleeping(true);
-    this.solids = buildArena(this.world);
+    if (this.map.id === 'classic') {
+      this.solids = buildArena(this.world);
+      this.level = null;
+    } else {
+      this.level = buildLevel(this.world, this.map);
+      this.solids = solidSnaps(this.level);
+    }
     if (options.roster !== 'empty') {
       this.spawnAt('player', 'YOU', 0, this.spawnPlayer, 1);
       this.spawnAt('dummy', 'DUMMY', 1, this.spawnDummy, -1);
@@ -154,13 +172,20 @@ export class Simulation {
     this.flush();
     this.tick += 1;
     this.time += stepDt;
+    if (this.level) tickLevel(this.level, this.time);
     this.hitQueue.length = 0;
     const roster = [...this.fighters.values()];
 
     for (const fighter of roster) {
-      const input = inputs.get(fighter.id) ?? fighter.lastInput;
+      const raw = inputs.get(fighter.id) ?? fighter.lastInput;
+      fighter.lastInput = { ...raw, moveX: clamp(raw.moveX, -1, 1) };
       fighter.vyPrev = fighter.bodies.torso.getLinearVelocity().y;
-      prepareFighter(fighter, { ...input, moveX: clamp(input.moveX, -1, 1) }, stepDt, this.time, this.params);
+    }
+    this.tickWeapons(stepDt, inputs);
+    for (const fighter of roster) {
+      const input = fighter.lastInput;
+      const posed = suppressLimb(fighter) ? { ...input, punch: false } : input;
+      prepareFighter(fighter, posed, stepDt, this.time, this.params);
     }
     for (const fighter of roster) {
       if (!fighter.throwQueued) continue;
@@ -169,8 +194,7 @@ export class Simulation {
     }
     this.capVelocities(false);
     for (const fighter of roster) {
-      const input = inputs.get(fighter.id) ?? fighter.lastInput;
-      driveFighter(fighter, { ...input, moveX: clamp(input.moveX, -1, 1) }, stepDt, this.params, this.grabTarget(fighter));
+      driveFighter(fighter, fighter.lastInput, stepDt, this.params, this.grabTarget(fighter));
     }
 
     this.world.step(stepDt, 22, 16);
@@ -190,7 +214,7 @@ export class Simulation {
     const run = () => {
       if (this.fighters.has(id) || this.fighters.size >= 8) return;
       const occupied = [...this.fighters.values()].map((fighter) => fighter.bodies.torso.getPosition().x);
-      const x = chooseSpawn(occupied);
+      const x = chooseSpawn(occupied, this.map.spawns);
       const mean = occupied.length === 0 ? x + 1 : occupied.reduce((sum, value) => sum + value, 0) / occupied.length;
       this.spawnAt(id, name, color, x, mean >= x ? 1 : -1);
     };
@@ -321,9 +345,20 @@ export class Simulation {
       lastInputSeq: this.lastInputSeq,
       banner,
       fighters: [...this.fighters.values()].map((fighter) => this.snapshotFighter(fighter)),
-      solids: this.solids,
+      solids: this.level ? solidSnaps(this.level) : this.solids,
       effects: this.effects.map((effect) => ({ ...effect })),
-      bounds: { minX: ARENA.minX, maxX: ARENA.maxX, minY: ARENA.minY, maxY: ARENA.maxY },
+      bounds: this.map.bounds,
+      mapId: this.map.id,
+      theme: this.map.theme,
+      pickups: this.arsenal.pickups.map((pickup) => ({ ...pickup })),
+      projectiles: this.arsenal.bolts.map((bolt) => ({ id: bolt.id, weapon: bolt.weapon, x: bolt.x, y: bolt.y })),
+      hazards: this.map.hazards.map((hazard) => ({
+        kind: hazard.kind,
+        x: hazard.x,
+        y: hazard.y,
+        hx: hazard.hx,
+        hy: hazard.hy,
+      })),
     };
   }
 
@@ -343,9 +378,40 @@ export class Simulation {
     if (fighter) this.respawn(fighter);
   }
 
+  deployWeapons(enabled: boolean, categories: WeaponCategories): void {
+    for (const fighter of this.fighters.values()) {
+      fighter.weaponId = null;
+      fighter.ammo = 0;
+      fighter.reserve = 0;
+      fighter.reloadLeft = 0;
+    }
+    deployArsenal(this.arsenal, enabled, categories, this.map.allow, this.map.weaponPoints, this.rng);
+  }
+
+  giveWeapon(id: string, weapon: string): void {
+    const fighter = this.fighters.get(id);
+    if (fighter) equipWeapon(fighter, weapon);
+  }
+
+  markInfected(ids: ReadonlySet<string>): void {
+    for (const fighter of this.fighters.values()) {
+      fighter.infected = ids.has(fighter.id);
+      fighter.moveScale = fighter.infected ? 1.35 : 1;
+    }
+  }
+
+  weaponOf(id: string): string | null {
+    return this.fighters.get(id)?.weaponId ?? null;
+  }
+
+  pickupCount(): number {
+    return this.arsenal.pickups.length;
+  }
+
   setFighterHp(id: string, hp: number, maxHp = MAX_HP): void {
     const fighter = this.fighters.get(id);
     if (!fighter) return;
+    fighter.maxHp = maxHp;
     fighter.hp = Math.max(0, Math.min(maxHp, hp));
     if (fighter.hp <= 0 && fighter.state !== 'ko') {
       fighter.hp = 0;
@@ -385,6 +451,35 @@ export class Simulation {
       body.setTransform({ x: p.x + dx, y: p.y + dy }, body.getAngle());
       body.setAwake(true);
     }
+  }
+
+  private tickWeapons(dt: number, inputs: ReadonlyMap<string, InputFrame>): void {
+    const host = {
+      time: this.time,
+      gravity: this.params.gravity,
+      rng: this.rng,
+      fighters: [...this.fighters.values()],
+      boxes: this.level
+        ? this.level.solids.filter((solid) => !solid.dead).map((solid) => ({
+            x: solid.x,
+            y: solid.y,
+            hx: solid.hx,
+            hy: solid.hy,
+            live: solid.hp !== null ? solid : null,
+          }))
+        : this.solids.map((solid) => ({ x: solid.x, y: solid.y, hx: solid.hx, hy: solid.hy, live: null })),
+      friendlyFire: this.friendlyFire,
+      teams: this.teams,
+      effect: (effect: EffectSpawn) => this.spawnEffect(effect),
+      destroySolid: (solid: LiveSolid) => {
+        if (solid.dead) return;
+        solid.dead = true;
+        if (solid.body) this.world.destroyBody(solid.body);
+        solid.body = null;
+      },
+    };
+    tickArsenal(this.arsenal, host, dt, inputs);
+    hazardTick(host, this.map.hazards, dt);
   }
 
   private combatContext() {
@@ -467,7 +562,10 @@ export class Simulation {
     if (peakW > this.peakAngular) this.peakAngular = peakW;
 
     const torso = f.bodies.torso.getPosition();
-    if (torso.y < -3 || torso.y > 16 || torso.x < -14 || torso.x > 14) this.respawn(f);
+    const bounds = this.map.bounds;
+    if (torso.y < this.map.killBelow || torso.y > bounds.maxY + 6 || torso.x < bounds.minX - 2 || torso.x > bounds.maxX + 2) {
+      this.respawn(f);
+    }
   }
 
   private respawn(f: Fighter): void {
@@ -477,7 +575,7 @@ export class Simulation {
       .filter((other) => other !== f)
       .map((other) => other.bodies.torso.getPosition().x);
     const homeClear = others.every((x) => Math.abs(x - f.spawnX) >= 1.25);
-    const x = homeClear ? f.spawnX : chooseSpawn(others);
+    const x = homeClear ? f.spawnX : chooseSpawn(others, this.map.spawns);
     f.place(x);
     f.hp = MAX_HP;
     f.spawnProtect = this.spawnProtectDuration;
@@ -516,8 +614,8 @@ export class Simulation {
       y: effect.y,
       vx: effect.kind === 'hit' || effect.kind === 'throw' ? dir * 0.7 : 0,
       vy: effect.kind === 'text' ? 1.6 : 1.05,
-      life: effect.kind === 'text' ? 0.7 : 0.28,
-      max: effect.kind === 'text' ? 0.7 : 0.28,
+      life: effect.kind === 'text' ? 0.7 : effect.kind === 'boom' ? 0.45 : 0.28,
+      max: effect.kind === 'text' ? 0.7 : effect.kind === 'boom' ? 0.45 : 0.28,
       mag: effect.mag,
       text: effect.text,
     });
@@ -540,7 +638,7 @@ export class Simulation {
       id: f.id,
       name: f.name,
       hp: f.hp,
-      maxHp: MAX_HP,
+      maxHp: f.maxHp,
       state: f.state,
       facing: f.facing,
       vx: f.bodies.torso.getLinearVelocity().x,
@@ -554,6 +652,10 @@ export class Simulation {
       flash: f.flash,
       headAngle: f.bodies.head.getAngle(),
       color: f.color,
+      weapon: f.weaponId,
+      ammo: f.ammo,
+      reserve: f.reserve,
+      infected: f.infected,
       parts: PARTS.map((part) => poseOf(f.bodies[part], part)),
       points: pointsOf(f),
     };

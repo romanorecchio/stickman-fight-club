@@ -104,7 +104,7 @@ export function driveFighter(f: Fighter, input: InputFrame, dt: number, params: 
 
   let targetVx = 0;
   if (!limp && f.state !== 'getup') {
-    const speed = input.crouch || f.state === 'crouch' ? params.crouchSpeed : input.sprint ? params.sprintSpeed : params.walkSpeed;
+    const speed = (input.crouch || f.state === 'crouch' ? params.crouchSpeed : input.sprint ? params.sprintSpeed : params.walkSpeed) * f.moveScale;
     targetVx = clamp(input.moveX, -1, 1) * speed;
     if (f.blocking) targetVx *= 0.55;
     if (f.attack === 'kick') targetVx *= 0.45;

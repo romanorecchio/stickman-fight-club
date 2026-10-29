@@ -2,6 +2,7 @@ import {
   clamp,
   lerp,
   lerpAngle,
+  weaponById,
   type FighterSnapshot,
   type PointName,
   type Snapshot,
@@ -97,8 +98,12 @@ export function drawFrame(
   now: number,
 ): void {
   ctx.clearRect(0, 0, view.width, view.height);
-  drawBackdrop(ctx, cam, view, now);
+  drawBackdrop(ctx, cam, view, now, snap.theme);
+  for (const hazard of snap.hazards ?? []) drawHazard(ctx, cam, view, hazard);
+  if (snap.match?.hill) drawHill(ctx, cam, view, snap.match.hill);
   for (const solid of snap.solids) drawSolid(ctx, cam, view, solid);
+  for (const pickup of snap.pickups ?? []) drawPickup(ctx, cam, view, pickup);
+  for (const shot of snap.projectiles ?? []) drawShot(ctx, cam, view, shot);
   for (const fighter of snap.fighters) drawShadow(ctx, cam, view, fighter);
   for (const fighter of snap.fighters) drawFighter(ctx, cam, view, fighter, false);
   for (const fighter of snap.fighters) drawFighter(ctx, cam, view, fighter, true);
@@ -106,11 +111,20 @@ export function drawFrame(
   if (debug) drawDebug(ctx, cam, view, snap);
 }
 
-function drawBackdrop(ctx: CanvasRenderingContext2D, cam: Camera, view: View, now: number): void {
+function drawBackdrop(ctx: CanvasRenderingContext2D, cam: Camera, view: View, now: number, theme = 'night'): void {
   const sky = ctx.createLinearGradient(0, 0, 0, view.height);
-  sky.addColorStop(0, '#2a1a22');
-  sky.addColorStop(0.45, '#1a1218');
-  sky.addColorStop(1, '#100d10');
+  const tops: Record<string, [string, string, string]> = {
+    night: ['#2a1a22', '#1a1218', '#100d10'],
+    roof: ['#243044', '#1a2230', '#10141c'],
+    lava: ['#3a1812', '#24110e', '#120a08'],
+    yard: ['#2c2618', '#1a1814', '#10100e'],
+    sky: ['#1c3048', '#142433', '#0e141c'],
+    ring: ['#2a1820', '#1a1216', '#100c0e'],
+  };
+  const colors = tops[theme] ?? tops.night!;
+  sky.addColorStop(0, colors[0]);
+  sky.addColorStop(0.45, colors[1]);
+  sky.addColorStop(1, colors[2]);
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, view.width, view.height);
 
@@ -135,6 +149,66 @@ function drawBackdrop(ctx: CanvasRenderingContext2D, cam: Camera, view: View, no
     ctx.arc(lamp.x, lamp.y + 90, 180, 0, Math.PI * 2);
     ctx.fill();
   }
+}
+
+function drawHazard(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  view: View,
+  hazard: Snapshot['hazards'][number],
+): void {
+  const center = screenPoint(cam, view, { x: hazard.x, y: hazard.y });
+  const w = hazard.hx * 2 * cam.zoom;
+  const h = hazard.hy * 2 * cam.zoom;
+  ctx.save();
+  ctx.globalAlpha = hazard.kind === 'lava' ? 0.85 : 0.28;
+  ctx.fillStyle = hazard.kind === 'lava' ? '#ff5a1f' : hazard.kind === 'conveyor' ? '#67d0c4' : '#1a0c10';
+  ctx.fillRect(center.x - w / 2, center.y - h / 2, w, h);
+  ctx.restore();
+}
+
+function drawHill(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  view: View,
+  hill: { x: number; y: number; ownerId: string | null },
+): void {
+  const center = screenPoint(cam, view, { x: hill.x, y: 0.05 });
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = hill.ownerId ? '#7dffa1' : '#ffe08a';
+  ctx.beginPath();
+  ctx.ellipse(center.x, center.y, 1.3 * cam.zoom, 0.28 * cam.zoom, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPickup(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  view: View,
+  pickup: Snapshot['pickups'][number],
+): void {
+  const p = screenPoint(cam, view, pickup);
+  const def = weaponById(pickup.weapon);
+  ctx.save();
+  ctx.fillStyle = '#e7b15a';
+  ctx.fillRect(p.x - 7, p.y - 7, 14, 14);
+  ctx.fillStyle = '#1a1210';
+  ctx.font = '700 10px DejaVu Sans, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(def?.name ?? pickup.weapon, p.x, p.y - 12);
+  ctx.restore();
+}
+
+function drawShot(ctx: CanvasRenderingContext2D, cam: Camera, view: View, shot: Snapshot['projectiles'][number]): void {
+  const p = screenPoint(cam, view, shot);
+  ctx.save();
+  ctx.fillStyle = shot.weapon === 'banana' ? '#f2d24b' : shot.weapon === 'chicken' ? '#f4efe4' : '#ffb15a';
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, shot.weapon === 'rocket' ? 5 : 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawSolid(
@@ -164,6 +238,22 @@ function drawSolid(
   if (solid.kind === 'wall') {
     ctx.fillStyle = '#1a1418';
     ctx.fillRect(x, y, w, h);
+    return;
+  }
+  if (solid.kind === 'rope') {
+    ctx.strokeStyle = '#d7c4a4';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x, y + h / 2);
+    ctx.lineTo(x + w, y + h / 2);
+    ctx.stroke();
+    return;
+  }
+  if (solid.kind === 'barrel') {
+    ctx.fillStyle = '#c4552a';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#f0d2a0';
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
     return;
   }
   const grad = ctx.createLinearGradient(x, y, x, y + h);
@@ -208,7 +298,7 @@ function drawFighter(
   ctx.lineJoin = 'round';
   ctx.globalAlpha = fighter.protecting ? 0.55 + 0.45 * Math.sin(performance.now() / 80) : front ? 1 : 0.72;
   const width = (front ? 0.075 : 0.06) * cam.zoom;
-  const bone = fighter.flash > 0.02 ? '#fff4ea' : look.bone;
+  const bone = fighter.flash > 0.02 ? '#fff4ea' : fighter.infected ? '#c6f27a' : look.bone;
   if (!front) {
     stroke(ctx, [pt('shoulder'), pt('elbowB'), pt('wristB')], width + 5, look.ink);
     stroke(ctx, [pt('shoulder'), pt('elbowB'), pt('wristB')], width, bone);
@@ -238,6 +328,17 @@ function drawFighter(
     stroke(ctx, [pt('heelF'), pt('toeF')], width + 4, look.ink);
     stroke(ctx, [pt('heelF'), pt('toeF')], width, bone);
     dot(ctx, pt('handF'), 0.062 * cam.zoom, bone, look.ink);
+    if (fighter.weapon) {
+      const def = weaponById(fighter.weapon);
+      const hand = pt('handF');
+      const reach = (def?.reach || 0.8) * cam.zoom * (def?.kind === 'hitscan' || def?.kind === 'projectile' ? 0.55 : 0.85);
+      ctx.strokeStyle = def?.cls === 'firearm' ? '#d5dde8' : def?.cls === 'explosive' ? '#e07a45' : '#e7b15a';
+      ctx.lineWidth = Math.max(3, 0.05 * cam.zoom);
+      ctx.beginPath();
+      ctx.moveTo(hand.x, hand.y);
+      ctx.lineTo(hand.x + fighter.facing * reach, hand.y - reach * 0.18);
+      ctx.stroke();
+    }
     for (const name of ['shoulder', 'elbowF', 'wristF', 'hip', 'kneeF', 'ankleF'] as const) {
       dot(ctx, pt(name), 0.038 * cam.zoom, look.joint, look.ink);
     }
@@ -302,9 +403,9 @@ function drawEffect(
     ctx.textAlign = 'center';
     ctx.fillText(effect.text, p.x, p.y);
   } else {
-    ctx.strokeStyle = effect.kind === 'block' ? '#7ad7ff' : effect.kind === 'throw' ? '#e7b15a' : '#fff';
-    ctx.lineWidth = 2;
-    const r = (0.12 + (1 - alpha) * 0.28) * cam.zoom;
+    ctx.strokeStyle = effect.kind === 'block' ? '#7ad7ff' : effect.kind === 'throw' ? '#e7b15a' : effect.kind === 'boom' ? '#ffb15a' : '#fff';
+    ctx.lineWidth = effect.kind === 'boom' ? 4 : 2;
+    const r = (effect.kind === 'boom' ? 0.35 + effect.mag * 0.25 : 0.12 + (1 - alpha) * 0.28) * cam.zoom;
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.stroke();

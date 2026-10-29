@@ -1,3 +1,6 @@
+import { sanitizeMapId, type MapId } from './maps.js';
+import { ALL_CATEGORIES, sanitizeCategories, type WeaponCategories } from './weapons.js';
+
 export type MatchMode = 'ffa' | 'tdm' | 'duel' | 'infection' | 'koth';
 export type MatchPhase = 'lobby' | 'countdown' | 'fight' | 'roundEnd' | 'matchEnd';
 export type TeamId = 'red' | 'blue' | 'none';
@@ -14,6 +17,9 @@ export interface MatchSettings {
   hillSeconds: number;
   hillMoves: boolean;
   weapons: boolean;
+  map: MapId;
+  categories: WeaponCategories;
+  lateJoin: 'spectate' | 'now' | 'closed';
 }
 
 export interface ScoreRow {
@@ -53,6 +59,9 @@ export const DEFAULT_MATCH: MatchSettings = {
   hillSeconds: 8,
   hillMoves: false,
   weapons: true,
+  map: 'classic',
+  categories: { ...ALL_CATEGORIES },
+  lateJoin: 'spectate',
 };
 
 const HILL_SPOTS = [-4, -1.5, 1.5, 4];
@@ -73,6 +82,9 @@ export function sanitizeSettings(raw: unknown, current: MatchSettings = DEFAULT_
     hillSeconds: clampInt(body.hillSeconds, 3, 30, current.hillSeconds),
     hillMoves: typeof body.hillMoves === 'boolean' ? body.hillMoves : current.hillMoves,
     weapons: typeof body.weapons === 'boolean' ? body.weapons : current.weapons,
+    map: body.map === undefined ? current.map : sanitizeMapId(body.map),
+    categories: sanitizeCategories(body.categories, current.categories),
+    lateJoin: body.lateJoin === 'now' || body.lateJoin === 'closed' || body.lateJoin === 'spectate' ? body.lateJoin : current.lateJoin,
   };
 }
 
@@ -195,7 +207,23 @@ export class MatchRules {
     }
     for (const fighter of fighters) {
       const down = fighter.state === 'ko' || fighter.hp <= 0;
-      if (this.spectators.has(fighter.id) || this.settings.elimination || this.settings.mode === 'duel' || this.settings.mode === 'infection') {
+      if (this.settings.mode === 'infection' && !this.spectators.has(fighter.id)) {
+        if (!down) {
+          this.downFor.delete(fighter.id);
+          continue;
+        }
+        this.alive.delete(fighter.id);
+        const waited = (this.downFor.get(fighter.id) ?? 0) + dt;
+        this.downFor.set(fighter.id, waited);
+        if (waited > 1.2) {
+          this.downFor.set(fighter.id, 0);
+          this.alive.add(fighter.id);
+          this.infected.add(fighter.id);
+          respawn.push(fighter.id);
+        } else hold.push(fighter.id);
+        continue;
+      }
+      if (this.spectators.has(fighter.id) || this.settings.elimination || this.settings.mode === 'duel') {
         if (down) this.alive.delete(fighter.id);
         hold.push(fighter.id);
         continue;

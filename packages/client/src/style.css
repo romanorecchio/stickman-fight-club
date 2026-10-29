@@ -293,6 +293,15 @@ button:hover, summary:hover { border-color: rgba(231, 177, 90, 0.7); }
 .join-url { color: var(--muted); font-size: 0.75rem; word-break: break-all; }
 #lobby-list { margin: 0; padding-left: 18px; }
 #host-tag { color: var(--amber); letter-spacing: 0.08em; font-size: 0.72rem; }
+.host-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 42vh; overflow: auto; }
+.host-settings[hidden] { display: none; }
+.host-settings label { display: grid; gap: 2px; font-size: 0.75rem; color: var(--muted); }
+.host-settings input, .host-settings select, .team-row button {
+  background: #0e0b0c; color: var(--ink); border: 1px solid var(--line); padding: 6px 8px; font: inherit;
+}
+.team-row { display: flex; gap: 8px; }
+.spectate-hint { margin: 0; color: var(--amber); }
+.spectate-hint[hidden] { display: none; }
 
 .boot-error[hidden] { display: none; }
 

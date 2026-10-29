@@ -87,7 +87,7 @@ function frame(now: number): void {
       noteEffects(display);
     }
   }
-  const focusId = mode === 'online' ? (online?.localId || 'player') : 'player';
+  const focusId = mode === 'online' ? spectateFocus(curr) : 'player';
   updateCamera(camera, curr, dt, view, shake, focusId);
   const alpha = mode === 'online' || paused ? 1 : acc / FIXED_DT;
   drawFrame(ctx!, mode === 'online' ? curr : interpolate(prev, curr, alpha), camera, view, debug, now);
@@ -121,7 +121,24 @@ function blendLocal(predicted: FighterSnapshot, server: FighterSnapshot): Fighte
     color: server.color,
     flash: Math.max(predicted.flash, server.flash),
     protecting: server.protecting,
+    weapon: server.weapon,
+    ammo: server.ammo,
+    reserve: server.reserve,
+    infected: server.infected,
   };
+}
+
+let spectateCursor = 0;
+
+function spectateFocus(snap: Snapshot): string {
+  const me = snap.match?.rows.find((row) => row.id === online?.localId);
+  const hint = document.querySelector<HTMLElement>('#spectate-hint');
+  if (hint) hint.hidden = !me?.spectating;
+  if (!me?.spectating) return online?.localId || 'player';
+  if (consumePress('KeyC')) spectateCursor += 1;
+  const targets = snap.match?.rows.filter((row) => !row.spectating) ?? [];
+  const pick = targets[spectateCursor % Math.max(1, targets.length)];
+  return pick?.id ?? online?.localId ?? 'player';
 }
 
 function bannerFor(fighter: FighterSnapshot): string | null {
@@ -167,7 +184,7 @@ function paintHud(snap: Snapshot): void {
         const num = bar.querySelector('b');
         const fill = bar.querySelector<HTMLElement>('.fill');
         if (name) name.textContent = fighter.name;
-        if (state) state.textContent = label(fighter.state, fighter.attack, fighter.blocking, fighter.grabbing);
+        if (state) state.textContent = weaponLabel(fighter) || label(fighter.state, fighter.attack, fighter.blocking, fighter.grabbing);
         if (num) num.textContent = String(Math.round(fighter.hp));
         if (fill) fill.style.width = `${pct}%`;
         return bar;
@@ -197,6 +214,13 @@ function paintHud(snap: Snapshot): void {
     const ping = mode === 'online' && online ? ` · ${Math.round(online.rtt)} ms` : '';
     stats.textContent = `${Math.round(fps)} fps${ping} · ${snap.fighters.length} fighters · joint ${stability.maxJointSeparation.toFixed(3)} m`;
   }
+}
+
+function weaponLabel(fighter: { weapon: string | null; ammo: number; reserve: number }): string {
+  if (!fighter.weapon) return '';
+  const name = fighter.weapon;
+  if (fighter.ammo <= 0 && fighter.reserve <= 0) return name;
+  return `${name} ${fighter.ammo}/${fighter.reserve}`;
 }
 
 function label(state: string, attack: string | null, blocking: boolean, grabbing: boolean): string {
@@ -369,6 +393,9 @@ function bindGate(): void {
     online?.emit('start-match');
   });
   document.querySelector('#mode-select')?.addEventListener('change', () => online?.emit('settings', readSettings()));
+  document.querySelector('#host-settings')?.addEventListener('change', () => online?.emit('settings', readSettings()));
+  document.querySelector('#team-red')?.addEventListener('click', () => online?.emit('team', { team: 'red' }));
+  document.querySelector('#team-blue')?.addEventListener('click', () => online?.emit('team', { team: 'blue' }));
   document.querySelector('#copy-btn')?.addEventListener('click', async () => {
     const url = document.querySelector('#join-url')?.textContent ?? '';
     try {
@@ -391,6 +418,20 @@ function readSettings(): Record<string, unknown> {
     scoreLimit: Number(document.querySelector<HTMLInputElement>('#score-limit')?.value ?? 10),
     elimination: document.querySelector<HTMLInputElement>('#elimination')?.checked ?? false,
     friendlyFire: document.querySelector<HTMLInputElement>('#friendly-fire')?.checked ?? true,
+    rounds: Number(document.querySelector<HTMLInputElement>('#rounds')?.value ?? 1),
+    startingHp: Number(document.querySelector<HTMLInputElement>('#starting-hp')?.value ?? 100),
+    bestOf: Number(document.querySelector<HTMLSelectElement>('#best-of')?.value ?? 3),
+    hillSeconds: Number(document.querySelector<HTMLInputElement>('#hill-seconds')?.value ?? 8),
+    hillMoves: document.querySelector<HTMLInputElement>('#hill-moves')?.checked ?? false,
+    lateJoin: document.querySelector<HTMLSelectElement>('#late-join')?.value ?? 'spectate',
+    map: document.querySelector<HTMLSelectElement>('#map-select')?.value ?? 'classic',
+    weapons: document.querySelector<HTMLInputElement>('#weapons-on')?.checked ?? true,
+    categories: {
+      melee: document.querySelector<HTMLInputElement>('#cat-melee')?.checked ?? true,
+      firearm: document.querySelector<HTMLInputElement>('#cat-firearm')?.checked ?? true,
+      explosive: document.querySelector<HTMLInputElement>('#cat-explosive')?.checked ?? true,
+      novelty: document.querySelector<HTMLInputElement>('#cat-novelty')?.checked ?? true,
+    },
   };
 }
 
@@ -420,7 +461,7 @@ function ensureOnline(): void {
   });
 }
 
-function renderLobby(lobby: { code: string; hostId: string; players: { id: string; name: string; host: boolean; connected: boolean }[] }): void {
+function renderLobby(lobby: { code: string; hostId: string; settings?: { mode?: string; map?: string }; players: { id: string; name: string; host: boolean; connected: boolean; team?: string }[] }): void {
   const code = document.querySelector('#room-code');
   const url = document.querySelector('#join-url');
   const list = document.querySelector('#lobby-list');
@@ -434,7 +475,8 @@ function renderLobby(lobby: { code: string; hostId: string; players: { id: strin
     list.replaceChildren(
       ...lobby.players.map((player) => {
         const item = document.createElement('li');
-        item.textContent = `${player.name}${player.host ? ' · host' : ''}${player.connected ? '' : ' · reconnecting'}`;
+        const team = player.team && player.team !== 'none' ? ` · ${player.team}` : '';
+        item.textContent = `${player.name}${team}${player.host ? ' · host' : ''}${player.connected ? '' : ' · reconnecting'}`;
         return item;
       }),
     );

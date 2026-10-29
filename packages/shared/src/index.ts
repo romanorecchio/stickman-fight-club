@@ -4,3 +4,5 @@ export * from './types.js';
 export * from './balance.js';
 export * from './net.js';
 export * from './match.js';
+export * from './weapons.js';
+export * from './maps.js';
