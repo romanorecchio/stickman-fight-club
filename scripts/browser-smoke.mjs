@@ -91,6 +91,12 @@ async function main() {
       console.log(`${label} lobby: ${(await page.$$eval('#lobby-list li', (els) => els.map((e) => e.textContent))).join(' | ')}`);
     }
 
+    if (shots) {
+      mkdirSync(shots, { recursive: true });
+      await host.screenshot({ path: path.join(shots, 'host-lobby.png') });
+      await guest.screenshot({ path: path.join(shots, 'guest-lobby.png') });
+    }
+
     await host.click('#start-match');
     await host.waitForFunction(() => {
       const net = window.__SFC__?.getNet();
@@ -101,10 +107,9 @@ async function main() {
     await host.waitForTimeout(1500);
 
     if (shots) {
-      mkdirSync(shots, { recursive: true });
-      await host.screenshot({ path: path.join(shots, 'host.png') });
-      await guest.screenshot({ path: path.join(shots, 'guest.png') });
-      console.log(`screenshots: ${path.join(shots, 'host.png')} ${path.join(shots, 'guest.png')}`);
+      await host.screenshot({ path: path.join(shots, 'host-match.png') });
+      await guest.screenshot({ path: path.join(shots, 'guest-match.png') });
+      console.log(`screenshots in ${shots}: host-lobby.png guest-lobby.png host-match.png guest-match.png`);
     }
     const real = errors.filter((e) => !/favicon/i.test(e));
     if (real.length) fail(`browser errors:\n${real.join('\n')}`);
