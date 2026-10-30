@@ -14,6 +14,12 @@ if (!ctx) {
   throw new Error('canvas 2d unavailable');
 }
 
+// Declared before any top-level call: bindGate() reads these, and a `const` used before its line throws (TDZ).
+const NAME_KEY = 'sfc-name';
+const LOOK_KEY = 'sfc-look';
+const NAME_A = ['Swift', 'Wobbly', 'Mighty', 'Sneaky', 'Spicy', 'Rowdy', 'Tiny', 'Lucky', 'Cranky', 'Bouncy'];
+const NAME_B = ['Stick', 'Noodle', 'Brawler', 'Kicker', 'Puncher', 'Ninja', 'Goblin', 'Twig', 'Bruiser', 'Pogo'];
+
 const sim = new Simulation({ seed: 1, ai: true });
 const camera = createCamera();
 let mode: 'gate' | 'training' | 'online' = 'gate';
@@ -468,9 +474,6 @@ const TUNABLES: { key: keyof BalanceParams; label: string; min: number; max: num
   { key: 'gravity', label: 'Gravity', min: -50, max: -12, step: 0.5 },
 ];
 
-bindHud();
-bindGate();
-requestAnimationFrame(frame);
 
 function bindGate(): void {
   const params = new URLSearchParams(location.search);
@@ -523,6 +526,7 @@ function bindGate(): void {
   const saved = sessionStorage.getItem('sfc-token');
   if (saved) {
     ensureOnline();
+    setPending('reconnect');
     online?.reconnect(saved);
   }
 }
@@ -552,26 +556,78 @@ function readSettings(): Record<string, unknown> {
   };
 }
 
+/** Set while a create/join is in flight so repeat clicks don't fire twice. */
+let pending: 'create' | 'join' | 'reconnect' | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
 function openOnline(kind: 'create' | 'join'): void {
+  if (pending === 'create' || pending === 'join') return;
   const nameInput = document.querySelector<HTMLInputElement>('#name');
   let name = (nameInput?.value ?? '').trim().slice(0, 16);
   if (!name) {
     name = randomName();
     if (nameInput) nameInput.value = name;
   }
-  localStorage.setItem(NAME_KEY, name);
-  const code = document.querySelector<HTMLInputElement>('#code')?.value ?? '';
+  try {
+    localStorage.setItem(NAME_KEY, name);
+  } catch {
+    // storage blocked; the name still goes to the server
+  }
+  const code = (document.querySelector<HTMLInputElement>('#code')?.value ?? '').trim().toUpperCase();
+  if (kind === 'join' && !code) {
+    showProblem('Enter a room code to join.');
+    return;
+  }
   const look = readLook();
-  localStorage.setItem(LOOK_KEY, JSON.stringify(look));
+  try {
+    localStorage.setItem(LOOK_KEY, JSON.stringify(look));
+  } catch {
+    // storage blocked
+  }
+  hideProblem();
   ensureOnline();
+  setPending(kind);
+  // socket.io buffers emits until the socket connects, so a click while the Fly machine wakes is queued, not dropped.
   if (kind === 'create') online?.create(name, look);
   else online?.join(name, code, look);
+}
+
+function setPending(kind: typeof pending): void {
+  pending = kind;
+  if (pendingTimer) clearTimeout(pendingTimer);
+  pendingTimer = null;
+  for (const id of ['#create-btn', '#join-btn']) {
+    const button = document.querySelector<HTMLButtonElement>(id);
+    if (button) button.disabled = kind === 'create' || kind === 'join';
+  }
+  if (!kind) {
+    setStatus(null);
+    return;
+  }
+  const verb = kind === 'create' ? 'Creating lobby…' : kind === 'join' ? 'Joining lobby…' : 'Rejoining your lobby…';
+  setStatus(online?.connected ? verb : 'Connecting…');
+  pendingTimer = setTimeout(() => {
+    if (pending) setStatus("Couldn't connect, retrying…");
+  }, 10000);
+}
+
+function setStatus(text: string | null): void {
+  const status = document.querySelector<HTMLElement>('#gate-status');
+  if (!status) return;
+  status.hidden = !text;
+  status.textContent = text ?? '';
+}
+
+function hideProblem(): void {
+  const problem = document.querySelector<HTMLElement>('#gate-error');
+  if (problem) problem.hidden = true;
 }
 
 function ensureOnline(): void {
   if (online) return;
   online = new OnlineSession({
     onWelcome: (welcome) => {
+      setPending(null);
       sessionStorage.setItem('sfc-token', welcome.token);
       sessionStorage.setItem('sfc-code', welcome.code);
       mode = 'online';
@@ -580,7 +636,27 @@ function ensureOnline(): void {
       renderLobby(welcome.lobby);
     },
     onLobby: (lobby) => renderLobby(lobby),
-    onProblem: (problem) => showProblem(problem.message),
+    onProblem: (problem) => {
+      if (pending === 'reconnect') {
+        // A stale token from an old tab or a restarted server: forget it quietly.
+        setPending(null);
+        sessionStorage.removeItem('sfc-token');
+        if (problem.code === 'token' || problem.code === 'closed') return;
+      }
+      if (pending) setPending(null);
+      if (problem.code === 'rate') return;
+      showProblem(problem.code === 'not_found' && problem.message.includes('No lobby') ? 'Room not found. Check the code and try again.' : problem.message);
+    },
+    onStatus: (status) => {
+      if (!pending) {
+        if (status === 'retrying' && mode === 'online') setStatus("Connection lost, reconnecting…");
+        else if (status === 'connected') setStatus(null);
+        return;
+      }
+      if (status === 'connected') setStatus(pending === 'create' ? 'Creating lobby…' : pending === 'join' ? 'Joining lobby…' : 'Rejoining your lobby…');
+      else if (status === 'retrying') setStatus("Couldn't connect, retrying…");
+      else setStatus('Connecting…');
+    },
     onLeft: () => showGate(),
     onReplay: (frames) => {
       if (frames.length < 2) return;
@@ -620,10 +696,6 @@ window.addEventListener('keydown', (event) => {
   });
 });
 
-const NAME_KEY = 'sfc-name';
-const LOOK_KEY = 'sfc-look';
-const NAME_A = ['Swift', 'Wobbly', 'Mighty', 'Sneaky', 'Spicy', 'Rowdy', 'Tiny', 'Lucky', 'Cranky', 'Bouncy'];
-const NAME_B = ['Stick', 'Noodle', 'Brawler', 'Kicker', 'Puncher', 'Ninja', 'Goblin', 'Twig', 'Bruiser', 'Pogo'];
 
 function randomName(): string {
   const pick = (list: string[]) => list[Math.floor(Math.random() * list.length)] ?? list[0]!;
@@ -731,3 +803,16 @@ declare global {
     __SFC__: typeof api;
   }
 }
+
+// Boot last, after every top-level const/let above is initialized.
+try {
+  bindHud();
+  bindGate();
+} catch (error) {
+  console.error('sfc boot failed', error);
+  if (bootError) {
+    bootError.textContent = 'Something broke while loading. Reload the page to try again.';
+    bootError.hidden = false;
+  }
+}
+requestAnimationFrame(frame);

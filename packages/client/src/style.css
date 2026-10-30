@@ -286,6 +286,8 @@ button:hover, summary:hover { border-color: rgba(231, 177, 90, 0.7); }
 .gate-row, .check { display: flex; gap: 8px; align-items: center; }
 
 .gate-error { margin: 0; color: #ff8d72; }
+.gate-status { margin: 0; color: #f4efe4; opacity: 0.8; }
+.gate-status[hidden], .gate-error[hidden] { display: none; }
 
 .lobby-card { pointer-events: auto; width: min(360px, 100%); margin-top: 8px; }
 .lobby-card[hidden] { display: none; }

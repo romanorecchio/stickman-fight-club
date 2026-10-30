@@ -225,6 +225,16 @@ function serveStatic(root: string, url: string, res: ServerResponse): void {
     res.end('not found');
     return;
   }
-  res.writeHead(200, { 'content-type': TYPES[path.extname(target)] ?? 'application/octet-stream' });
+  res.writeHead(200, {
+    'content-type': TYPES[path.extname(target)] ?? 'application/octet-stream',
+    'cache-control': staticCacheControl(base, target),
+  });
   createReadStream(target).pipe(res);
+}
+
+/** index.html must revalidate so a deploy's new hashed bundle is picked up; hashed assets can cache forever. */
+export function staticCacheControl(base: string, target: string): string {
+  const rel = path.relative(base, target).split(path.sep).join('/');
+  if (rel.startsWith('assets/')) return 'public, max-age=31536000, immutable';
+  return 'no-cache';
 }

@@ -170,7 +170,8 @@
         <label>Room code <input id="code" name="code" maxlength="6" autocapitalize="characters" /></label>
         <button type="button" id="join-btn">Join lobby</button>
         <label class="check"><input id="dummy-toggle" type="checkbox" checked /> Sparring dummy in the training room</label>
-        <p id="gate-error" class="gate-error" hidden></p>
+        <p id="gate-status" class="gate-status" aria-live="polite" hidden></p>
+        <p id="gate-error" class="gate-error" role="alert" hidden></p>
       </form>
     </section>
     <p id="boot-error" class="boot-error" hidden>Could not start the canvas.</p>

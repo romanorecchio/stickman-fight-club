@@ -8,6 +8,7 @@ export interface OnlineHooks {
   onProblem: (problem: RoomError) => void;
   onLeft: () => void;
   onReplay?: (frames: Snapshot[]) => void;
+  onStatus?: (status: 'connecting' | 'connected' | 'retrying') => void;
   onGate?: (payload: { effects: { id: string; name: string; tab: string }[] }) => void;
 }
 
@@ -28,6 +29,10 @@ export class OnlineSession {
 
   constructor(private readonly hooks: OnlineHooks) {}
 
+  get connected(): boolean {
+    return this.socket?.connected ?? false;
+  }
+
   get localId(): string {
     return this.welcome?.playerId ?? '';
   }
@@ -35,7 +40,12 @@ export class OnlineSession {
   connect(): void {
     if (this.socket) return;
     const url = import.meta.env.VITE_SERVER_URL || undefined;
-    this.socket = io(url, { transports: ['websocket', 'polling'] });
+    // Long timeout + endless retries: a sleeping Fly machine can take several seconds to wake.
+    this.socket = io(url, { transports: ['websocket', 'polling'], timeout: 20000, reconnectionDelayMax: 4000 });
+    this.hooks.onStatus?.('connecting');
+    this.socket.on('connect', () => this.hooks.onStatus?.('connected'));
+    this.socket.on('connect_error', () => this.hooks.onStatus?.('retrying'));
+    this.socket.on('disconnect', () => this.hooks.onStatus?.('retrying'));
     this.socket.on('welcome', (welcome: Welcome) => {
       this.welcome = welcome;
       this.lobby = welcome.lobby;
