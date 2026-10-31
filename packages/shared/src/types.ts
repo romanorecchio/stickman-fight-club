@@ -54,6 +54,10 @@ export interface FighterSnapshot {
   attack: 'punch' | 'kick' | null;
   protecting: boolean;
   flash: number;
+  /** Seconds of hit-stun left (drives the hurt face). Optional for older snapshots. */
+  stun?: number;
+  /** Seconds of dizzy stars left after a knockdown. */
+  dizzy?: number;
   headAngle: number;
   /** Palette index. Training: 0 you, 1 dummy. */
   color: number;

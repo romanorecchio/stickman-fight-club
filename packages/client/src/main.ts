@@ -1,9 +1,10 @@
 import { DEFAULT_BALANCE, FIXED_DT, sanitizeBalance, type BalanceParams, type FighterSnapshot, type Snapshot } from '@sfc/shared';
 import { Simulation } from '@sfc/sim';
-import { isMuted, playEffect, setMuted, setVolume } from './audio.js';
-import { buildInput, consumePress, installInput, pointer } from './input.js';
+import { isMuted, setMuted, setVolume } from './audio.js';
+import { frozen, observe, tick as tickJuice } from './juice.js';
+import { buildInput, consumePress, heading, installInput } from './input.js';
 import { OnlineSession, type Look } from './net.js';
-import { createCamera, drawFrame, interpolate, updateCamera, worldPoint, type View } from './render.js';
+import { createCamera, drawFrame, interpolate, updateCamera, type View } from './render.js';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view');
 const bootError = document.querySelector<HTMLElement>('#boot-error');
@@ -27,6 +28,7 @@ let online: OnlineSession | null = null;
 let prev = sim.getSnapshot();
 let curr = prev;
 let acc = 0;
+let netAcc = 0;
 let last = performance.now();
 let seq = 1;
 let paused = false;
@@ -37,7 +39,6 @@ let replayAcc = 0;
 let reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 let reduceFlash = false;
 let shake = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const heard = new Set<number>();
 let fps = 60;
 const view: View = { width: 1, height: 1 };
 
@@ -76,8 +77,10 @@ function frame(now: number): void {
   }
   if (consumePress('F3')) debug = !debug;
 
+  const freeze = frozen(now) && !reduceMotion;
   if (mode === 'training' && !paused) {
-    acc += dt;
+    // Hit-stop: the world holds its breath for a few frames on a big hit.
+    if (!freeze) acc += dt;
     let steps = 0;
     const aim = aimVector();
     while (acc >= FIXED_DT && steps < 5) {
@@ -88,22 +91,27 @@ function frame(now: number): void {
       acc -= FIXED_DT;
       steps += 1;
     }
-    noteEffects(curr);
+    observe(curr, now, 'player');
   } else if (mode === 'online' && online) {
-    if (!paused) {
+    // Inputs go out at the sim's fixed 60 Hz, not once per display frame: on a 120/144 Hz
+    // screen the old per-frame send ran local prediction 2x fast and tripped the rate limit.
+    netAcc = Math.min(netAcc + dt, FIXED_DT * 5);
+    while (!paused && netAcc >= FIXED_DT) {
       online.sendInput(buildInput(seq, aimVector()));
       seq += 1;
+      netAcc -= FIXED_DT;
     }
-    const display = composeOnline();
+    const display = freeze ? null : composeOnline();
     if (display) {
       prev = curr;
       curr = display;
-      noteEffects(display);
+      observe(display, now, online.localId);
     }
   }
   const shown = replayFrame(dt) ?? curr;
   if (reduceFlash) for (const fighter of shown.fighters) fighter.flash = 0;
   const focusId = mode === 'online' ? spectateFocus(shown) : 'player';
+  tickJuice(shown, freeze ? dt * 0.15 : dt);
   updateCamera(camera, shown, dt, view, shake && !reduceMotion, focusId);
   const alpha = mode === 'online' || paused || replay ? 1 : acc / FIXED_DT;
   drawFrame(ctx!, mode === 'online' || replay ? shown : interpolate(prev, curr, alpha), camera, view, debug, now);
@@ -203,25 +211,38 @@ function bannerFor(fighter: FighterSnapshot): string | null {
   return null;
 }
 
-function aimVector(): { x: number; y: number } {
-  const mouse = pointer();
-  const focus = mode === 'online' ? online?.localId : 'player';
-  const torso = curr.fighters.find((fighter) => fighter.id === focus)?.points.shoulder ?? { x: camera.x, y: camera.y };
-  if (!mouse.ready) return { x: 1, y: 0.1 };
-  const world = worldPoint(camera, view, mouse.x, mouse.y);
-  return { x: world.x - torso.x, y: world.y - torso.y };
-}
+let aimDir = 1;
 
-function noteEffects(snap: Snapshot): void {
-  for (const effect of snap.effects) {
-    if (heard.has(effect.id) || effect.kind === 'text') continue;
-    heard.add(effect.id);
-    playEffect(effect.kind, effect.mag);
+/**
+ * No mouse aiming: punches and grabs home in on the nearest stickman in the direction
+ * you're heading. Holding someone aims the throw up and forward.
+ */
+function aimVector(): { x: number; y: number } {
+  const focus = mode === 'online' ? online?.localId : 'player';
+  const me = curr.fighters.find((fighter) => fighter.id === focus);
+  const push = heading();
+  if (push !== 0) aimDir = push;
+  else if (me && !me.grabbing) aimDir = me.facing;
+  if (!me) return { x: aimDir, y: 0.1 };
+  if (me.grabbing) return { x: aimDir, y: 0.75 };
+  const from = me.points.shoulder;
+  let best: { x: number; y: number; d: number } | null = null;
+  for (const other of curr.fighters) {
+    if (other.id === me.id || other.invisible || other.state === 'ko') continue;
+    const at = other.points.shoulder;
+    const dx = at.x - from.x;
+    const dy = at.y - from.y;
+    const d = Math.hypot(dx, dy);
+    const ahead = Math.sign(dx) === aimDir;
+    if (d > 3.2 || Math.abs(dy) > 2.2) continue;
+    if (!ahead && (push !== 0 || d > 1.4)) continue;
+    if (!best || d < best.d) best = { x: dx, y: dy, d };
   }
-  if (heard.size > 80) {
-    const keep = new Set(snap.effects.map((effect) => effect.id));
-    for (const id of heard) if (!keep.has(id)) heard.delete(id);
+  if (best) {
+    if (push === 0) aimDir = Math.sign(best.x) || aimDir;
+    return { x: best.x, y: best.y - 0.05 };
   }
+  return { x: aimDir, y: 0.1 };
 }
 
 function paintHud(snap: Snapshot): void {
@@ -439,7 +460,7 @@ function formatNum(value: number): string {
   return Math.abs(value) >= 10 ? value.toFixed(0) : value.toFixed(2);
 }
 
-const TUNE_KEY = 'sfc-balance-v1';
+const TUNE_KEY = 'sfc-balance-v2';
 
 function loadTune(): Partial<BalanceParams> | null {
   try {

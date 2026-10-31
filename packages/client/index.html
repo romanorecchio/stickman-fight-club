@@ -21,21 +21,11 @@
       <pre id="scoreboard" class="scoreboard" hidden></pre>
       <div class="dock">
         <p class="controls">
-          <kbd>A</kbd><kbd>D</kbd> move
-          <kbd>W</kbd> jump
-          <kbd>S</kbd> crouch
-          <kbd>Shift</kbd> sprint
-          <kbd>Space</kbd> kick
-          <kbd>LMB</kbd> punch
-          <kbd>RMB</kbd> block
-          <kbd>E</kbd> grab
-          <kbd>Q</kbd> throw
-          <kbd>F</kbd> pickup
-          <kbd>R</kbd> reload
-          <kbd>G</kbd> drop
-          <span>mouse aims</span>
+          <kbd>A</kbd><kbd>D</kbd> wobble
+          <kbd>W</kbd>/<kbd>Space</kbd> jump
+          <kbd>Click</kbd>/<kbd>J</kbd> hit (in the air: drop-kick)
+          <kbd>Right-click</kbd>/<kbd>K</kbd> grab · again to throw
           <kbd>Esc</kbd> pause
-          <kbd>F3</kbd> bodies
         </p>
         <div class="dock-actions">
           <button type="button" id="pause-btn">Pause</button>
@@ -129,14 +119,10 @@
         <button type="button" data-hold="left">Left</button>
         <button type="button" data-hold="right">Right</button>
         <button type="button" data-hold="jump">Jump</button>
-        <button type="button" data-hold="crouch">Crouch</button>
       </div>
       <div class="touch-right">
-        <button type="button" data-hold="punch">Punch</button>
-        <button type="button" data-hold="kick">Kick</button>
-        <button type="button" data-hold="block">Block</button>
-        <button type="button" data-hold="grab">Grab</button>
-        <button type="button" data-hold="throw">Throw</button>
+        <button type="button" data-hold="punch">Hit</button>
+        <button type="button" data-hold="grab">Grab / Throw</button>
       </div>
     </div>
     <section id="gate" class="gate">

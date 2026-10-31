@@ -108,6 +108,25 @@ export class Fighter {
   face = 'dot';
   dealt = 0;
   taken = 0;
+  /** Drunk-walk state. All deterministic so server and client prediction agree. */
+  readonly seed: number;
+  clock = 0;
+  laggedVx = 0;
+  stepIndex = 0;
+  stepStride = 1;
+  stepLift = 1;
+  /** Seconds a knockdown keeps the ragdoll limp before the wobbly stand-up. */
+  downFor = 0.42;
+  /** Dizzy stars timer, also drives the shaky get-up. */
+  dizzy = 0;
+  groundY = 0;
+  prevGrabCtx = false;
+  /** Accumulated wobble from recent hits; enough of it and you go down. */
+  daze = 0;
+  /** True while the legs are taking steps (walking or catching balance). */
+  stepping = false;
+  /** Brief grace after standing up so nobody gets juggled on the floor forever. */
+  getupGrace = 0;
 
   constructor(
     world: World,
@@ -120,6 +139,7 @@ export class Fighter {
     color = id === 'dummy' ? 1 : 0,
   ) {
     this.id = id;
+    this.seed = hashId(id);
     this.name = name;
     this.color = color;
     this.hat = 'none';
@@ -138,8 +158,8 @@ export class Fighter {
       const body = world.createDynamicBody({
         position: at,
         angle: 0,
-        linearDamping: part === 'torso' ? 0.4 : 1.05,
-        angularDamping: part === 'torso' || part === 'head' ? 3.4 : 4,
+        linearDamping: part === 'torso' ? 0.3 : 0.55,
+        angularDamping: part === 'torso' ? 2.2 : part === 'head' ? 1.6 : 2.4,
         allowSleep: false,
         bullet: false,
       });
@@ -148,7 +168,7 @@ export class Fighter {
       const fixture = body.createFixture(shapeFor(part), {
         density: DENSITY[part],
         friction: part.startsWith('foot') ? 1.15 : 0.35,
-        restitution: part === 'head' ? 0.05 : 0.01,
+        restitution: part === 'head' ? 0.12 : part.startsWith('hand') ? 0.1 : 0.02,
         filterGroupIndex: group,
         filterCategoryBits: CATEGORY_FIGHTER,
         filterMaskBits: CATEGORY_WORLD | CATEGORY_FIGHTER,
@@ -213,6 +233,9 @@ export class Fighter {
     this.cooldownPunch = 0;
     this.cooldownKick = 0;
     this.envCooldown = 0;
+    this.laggedVx = 0;
+    this.downFor = 0.42;
+    this.dizzy = 0;
     for (const name of JOINTS) {
       this.joints[name].setMotorSpeed(0);
     }
@@ -237,6 +260,24 @@ export class Fighter {
     }
     return { name, separation };
   }
+}
+
+/** Stable 32-bit hash of an id, so every fighter staggers a little differently. */
+export function hashId(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i += 1) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Deterministic 0..1 noise for an integer key. */
+export function noise01(seed: number, key: number): number {
+  let t = (seed ^ Math.imul(key | 0, 0x9e3779b1)) >>> 0;
+  t = Math.imul(t ^ (t >>> 15), 1 | t);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
 function zeroTargets(): Record<JointName, number> {

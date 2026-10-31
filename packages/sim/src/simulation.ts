@@ -29,6 +29,7 @@ import { buildLevel, solidSnaps, tickLevel, type Level, type LiveSolid } from '.
 import { attachContacts, releaseGrab, resolveHits, tryAttachGrab, updateGrab, type EffectSpawn, type QueuedHit } from './combat.js';
 import { driveFighter, prepareFighter } from './controller.js';
 import { Fighter, type UserData } from './fighter.js';
+import { knockDown } from './knock.js';
 import { ARENA, chooseSpawn, FOOT, HAND, HEAD, LOWER_ARM, LOWER_LEG, TORSO, UPPER_ARM, UPPER_LEG } from './metrics.js';
 
 export interface SimOptions {
@@ -177,13 +178,26 @@ export class Simulation {
     const roster = [...this.fighters.values()];
 
     for (const fighter of roster) {
-      const raw = inputs.get(fighter.id) ?? fighter.lastInput;
+      const raw = inputs.get(fighter.id) ?? { ...fighter.lastInput, pickup: false, drop: false };
       const moveX = clamp(raw.moveX, -1, 1) * (fighter.chaosFlip ? -1 : 1);
       const aimX = fighter.chaosFlip ? -raw.aimX : raw.aimX;
-      fighter.lastInput = { ...raw, moveX, aimX };
+      // The grab button is contextual: throw who you hold, else grab a weapon off the floor,
+      // else toss the weapon you hold when nobody is in reach.
+      const grabEdge = raw.grab && !fighter.prevGrabCtx;
+      fighter.prevGrabCtx = raw.grab;
+      let pickup = raw.pickup ?? false;
+      let drop = raw.drop ?? false;
+      if (grabEdge && !fighter.grab && fighter.state !== 'ko') {
+        const p = fighter.bodies.torso.getPosition();
+        const near = this.arsenal.pickups.some((item) => Math.hypot(item.x - p.x, item.y - p.y) < 1.2);
+        if (near) pickup = true;
+        else if (fighter.weaponId && !this.grabTarget(fighter)) drop = true;
+      }
+      fighter.lastInput = { ...raw, moveX, aimX, pickup, drop };
       fighter.vyPrev = fighter.bodies.torso.getLinearVelocity().y;
     }
-    this.tickWeapons(stepDt, inputs);
+    // Weapons read the resolved inputs, so the contextual grab button's pickup/drop counts.
+    this.tickWeapons(stepDt, new Map(roster.map((fighter) => [fighter.id, fighter.lastInput] as const)));
     for (const fighter of roster) {
       const input = fighter.lastInput;
       const posed = suppressLimb(fighter) ? { ...input, punch: false } : input;
@@ -199,7 +213,11 @@ export class Simulation {
       driveFighter(fighter, fighter.lastInput, stepDt, this.params, this.grabTarget(fighter));
     }
 
-    this.world.step(stepDt, 22, 16);
+    // Two substeps: half the travel per solve, so hard hits can't pull limbs apart.
+    this.world.setAutoClearForces(false);
+    this.world.step(stepDt / 2, 12, 8);
+    this.world.step(stepDt / 2, 12, 8);
+    this.world.clearForces();
 
     const spawned: EffectSpawn[] = [];
     const ctx = this.combatContext();
@@ -552,11 +570,8 @@ export class Simulation {
     const grounded = sampleGrounded(this.world, f);
     if (grounded && !f.wasGrounded && f.state !== 'fallen' && f.state !== 'getup' && f.state !== 'ko') {
       if (f.vyPrev < -12.5) {
-        f.state = 'fallen';
-        f.stateTime = 0;
-        f.balanceMute = Math.max(f.balanceMute, 0.25);
-        f.attack = null;
-        f.strike = null;
+        knockDown(f, 0.6);
+        this.spawnEffect({ kind: 'text', x: f.bodies.torso.getPosition().x, y: f.bodies.torso.getPosition().y + 0.3, mag: 3, text: 'SPLAT!' });
       } else if (f.vyPrev < -8) {
         f.hitStun = Math.max(f.hitStun, 0.14);
       }
@@ -699,6 +714,8 @@ export class Simulation {
       attack: f.attack,
       protecting: f.spawnProtect > 0,
       flash: f.flash,
+      stun: Math.round(Math.max(f.hitStun, f.balanceMute) * 100) / 100,
+      dizzy: Math.round(f.dizzy * 100) / 100,
       headAngle: f.bodies.head.getAngle(),
       color: f.color,
       weapon: f.weaponId,

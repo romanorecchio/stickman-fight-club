@@ -1,6 +1,7 @@
 import { DistanceJoint, World, type Body } from 'planck';
 import { clamp, weaponById, type BalanceParams, type EffectKind, type FighterId, type PartName } from '@sfc/shared';
 import type { Fighter, UserData } from './fighter.js';
+import { knockDown, launch } from './knock.js';
 
 export interface QueuedHit {
   a: UserData;
@@ -43,7 +44,7 @@ export function attachContacts(world: World, queue: QueuedHit[], ctx: () => Comb
       if (foot && foot.kind === 'fighter') {
         const fighter = byId(ctx(), foot.id);
         if (!fighter) return;
-        contact.setFriction(footFrictionFor(fighter, ctx().params.footFriction));
+        contact.setFriction(footFrictionFor(fighter, ctx().params.footFriction, foot.part));
       }
     }
 
@@ -86,15 +87,14 @@ export function releaseGrab(world: World, grabber: Fighter, impulse: { x: number
   grabber.grab = null;
   if (victim.heldBy === grabber) victim.heldBy = null;
   if (impulse) {
-    const torso = victim.bodies.torso;
-    torso.applyLinearImpulse(impulse, torso.getWorldCenter(), true);
-    torso.applyAngularImpulse(-Math.sign(impulse.x || grabber.facing) * Math.hypot(impulse.x, impulse.y) * 0.06, true);
-    victim.balanceMute = Math.max(victim.balanceMute, 0.32);
+    // Yeet: the whole ragdoll flies and cartwheels, then lands in a heap.
+    const scale = 0.16;
+    const mag = Math.hypot(impulse.x, impulse.y);
+    launch(victim, impulse.x * scale, impulse.y * scale, -Math.sign(impulse.x || grabber.facing) * mag * 0.17);
     victim.hitStun = Math.max(victim.hitStun, 0.22);
     victim.flash = 0.12;
-    if (Math.hypot(impulse.x, impulse.y) > 36 && victim.state !== 'ko') {
-      victim.state = 'stumble';
-    }
+    if (mag > 36 && victim.state !== 'ko') knockDown(victim, 0.9);
+    else victim.balanceMute = Math.max(victim.balanceMute, 0.32);
   }
   return victim;
 }
@@ -239,7 +239,7 @@ function connect(
   const fromFront = rel === 0 || rel === victim.facing;
   const blocked = victim.blocking && fromFront;
   const loc = part === 'head' ? 1.45 : part === 'torso' ? 1 : 0.62;
-  let damage = (strike === 'kick' ? 16 : 12) * power * loc * ctx.params.damageScale;
+  let damage = (strike === 'kick' ? 18 : 12) * power * loc * ctx.params.damageScale;
   if (blocked) damage *= 0.22;
   const armed = weaponById(attacker.weaponId);
   if (armed?.kind === 'swing') damage *= 0.25;
@@ -248,28 +248,31 @@ function connect(
   damage = clamp(damage, 0, 22 * ctx.params.damageScale);
 
   let kx = vx - ax;
-  let ky = 0.28;
   if (Math.abs(kx) < 0.08) kx = attacker.facing;
-  const kn = Math.hypot(kx, ky) || 1;
-  kx /= kn;
-  ky /= kn;
-  const base = (strike === 'kick' ? 64 : 44) * power * ctx.params.knockbackScale * (blocked ? 0.25 : 1);
-  const torso = victim.bodies.torso;
-  torso.applyLinearImpulse({ x: kx * base, y: ky * base }, torso.getWorldCenter(), true);
-  torso.applyAngularImpulse(-Math.sign(kx) * base * (strike === 'kick' ? 0.05 : 0.028), true);
+  kx = Math.sign(kx);
+  const ky = strike === 'kick' ? 0.62 : 0.45;
+  // The more beat-up you are, the further you fly.
+  const hurt = 1 + (1 - clamp((victim.hp - damage) / Math.max(1, victim.maxHp), 0, 1)) * 0.75;
+  const finishing = victim.hp - damage <= 0;
+  const dv =
+    (strike === 'kick' ? 8.6 : 5.4) * power * hurt * ctx.params.knockbackScale * (blocked ? 0.25 : 1) * (finishing ? 1.45 : 1);
+  const norm = Math.hypot(1, ky);
+  launch(victim, (kx / norm) * dv, (ky / norm) * dv, -kx * dv * (strike === 'kick' ? 1.0 : 0.85), 15);
+  // A little recoil sells the impact on the attacker's side too.
+  launch(attacker, -kx * dv * 0.08, 0, 0);
   victim.flash = 0.14;
   attacker.flash = 0.06;
 
-  const severity = power * (strike === 'kick' ? 1.22 : 0.84) * (blocked ? 0.28 : 1);
-  if (!blocked && severity > 1.2 && victim.state !== 'getup') {
-    victim.state = 'fallen';
-    victim.stateTime = 0;
-    victim.balanceMute = Math.max(victim.balanceMute, 0.42);
-    victim.attack = null;
-    victim.strike = null;
+  const severity = power * (strike === 'kick' ? 1.22 : 0.84) * (blocked ? 0.28 : 1) * hurt;
+  // Hits stack up: two or three quick punches in a row put anyone on the floor.
+  const grace = victim.state === 'getup' || victim.getupGrace > 0;
+  if (!blocked && !grace) victim.daze += severity * 0.7;
+  if (!blocked && !grace && (severity > 0.95 || victim.daze > 1.0)) {
+    victim.daze = 0;
+    knockDown(victim, 0.45 + severity * 0.45);
   } else if (severity > 0.5) {
-    victim.hitStun = Math.max(victim.hitStun, blocked ? 0.08 : strike === 'kick' ? 0.28 : 0.2);
-    if (!blocked) victim.balanceMute = Math.max(victim.balanceMute, 0.12);
+    victim.hitStun = Math.max(victim.hitStun, blocked ? 0.08 : strike === 'kick' ? 0.32 : 0.24);
+    if (!blocked) victim.balanceMute = Math.max(victim.balanceMute, 0.14);
     if (!blocked && victim.state !== 'fallen' && victim.state !== 'getup') {
       victim.state = 'stumble';
     }
@@ -291,9 +294,9 @@ function connect(
     ctx.effects.push({
       kind: 'text',
       x: hit.px,
-      y: hit.py + 0.2,
+      y: hit.py + 0.6,
       mag: damage,
-      text: blocked ? 'BLOCK' : String(Math.round(damage)),
+      text: blocked ? 'BLOCK' : comicWord(strike, part, damage, ctx.hitsLanded.n, victim.hp - damage <= 0),
     });
     if (victim.hp <= 0) {
       victim.hp = 0;
@@ -340,18 +343,14 @@ function resolveWorldHit(hit: QueuedHit, ctx: CombatContext): void {
   fighter.envCooldown = 0.4;
   const damage = clamp((hit.relSpeed - 8) * 0.8, 0, 10) * ctx.params.damageScale;
   if (hit.relSpeed > 13 && fighter.state !== 'getup') {
-    fighter.state = 'fallen';
-    fighter.stateTime = 0;
-    fighter.balanceMute = Math.max(fighter.balanceMute, 0.28);
-    fighter.attack = null;
-    fighter.strike = null;
+    knockDown(fighter, 0.7);
   } else {
     fighter.hitStun = Math.max(fighter.hitStun, 0.16);
   }
   fighter.flash = 0.1;
   if (damage > 0.5) {
     fighter.hp = Math.max(0, fighter.hp - damage);
-    ctx.effects.push({ kind: 'text', x: hit.px, y: hit.py, mag: damage, text: String(Math.round(damage)) });
+    ctx.effects.push({ kind: 'text', x: hit.px, y: hit.py + 0.3, mag: damage, text: fighterData.part === 'head' ? 'BONK!' : 'THUD!' });
     if (fighter.hp <= 0) {
       fighter.hp = 0;
       fighter.state = 'ko';
@@ -385,10 +384,15 @@ function byId(ctx: CombatContext, id: FighterId): Fighter | undefined {
   return ctx.fighters.find((fighter) => fighter.id === id);
 }
 
-function footFrictionFor(fighter: Fighter, planted: number): number {
+function footFrictionFor(fighter: Fighter, planted: number, part: PartName): number {
   if (fighter.slipLeft > 0) return 0.06;
   if (fighter.state === 'fallen' || fighter.state === 'ko') return 0.35;
-  if (fighter.state === 'walk' || fighter.state === 'sprint' || fighter.state === 'air' || fighter.state === 'stumble') {
+  if (fighter.stepping) {
+    // The swinging foot skates (a drunk shuffle), the planted one grips.
+    const swing = Math.sin(fighter.phase) > 0 ? 'footF' : 'footB';
+    return part === swing ? 0.04 : 0.5;
+  }
+  if (fighter.state === 'air' || fighter.state === 'stumble') {
     return 0.48;
   }
   return planted;
@@ -408,4 +412,15 @@ function hitKey(hit: QueuedHit): string {
 
 function dataKey(data: UserData): string {
   return data.kind === 'fighter' ? `${data.id}:${data.part}` : `world:${data.surface}`;
+}
+
+const PUNCH_WORDS = ['POW!', 'BOP!', 'SMACK!', 'WHAP!', 'SLAP!'];
+const KICK_WORDS = ['WHAM!', 'KAPOW!', 'THWACK!', 'BOOF!'];
+
+/** Pick a comic-book sound effect for a landed hit. Deterministic so every client agrees. */
+export function comicWord(strike: 'punch' | 'kick', part: PartName, damage: number, n: number, ko: boolean): string {
+  if (ko) return 'K.O.!';
+  if (part === 'head') return damage > 14 ? 'BONK!!' : 'BONK!';
+  const list = strike === 'kick' ? KICK_WORDS : PUNCH_WORDS;
+  return list[n % list.length] ?? 'POW!';
 }

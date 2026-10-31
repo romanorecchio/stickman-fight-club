@@ -6,10 +6,10 @@ export interface BoxSize {
 }
 
 export const TORSO: BoxSize = { hx: 0.17, hy: 0.3 };
-export const HEAD = { r: 0.155 };
+export const HEAD = { r: 0.19 };
 export const UPPER_ARM: BoxSize = { hx: 0.05, hy: 0.16 };
 export const LOWER_ARM: BoxSize = { hx: 0.045, hy: 0.145 };
-export const HAND = { r: 0.065 };
+export const HAND = { r: 0.075 };
 export const UPPER_LEG: BoxSize = { hx: 0.07, hy: 0.19 };
 export const LOWER_LEG: BoxSize = { hx: 0.058, hy: 0.175 };
 export const FOOT: BoxSize = { hx: 0.13, hy: 0.045 };
@@ -53,20 +53,20 @@ export function layoutCharacter(x: number): Record<PartName, { x: number; y: num
 }
 
 export const DENSITY: Record<PartName, number> = {
-  head: 10,
+  head: 7.5,
   torso: 16,
   upperArmF: 10,
   upperArmB: 10,
   lowerArmF: 10,
   lowerArmB: 10,
-  handF: 7,
-  handB: 7,
+  handF: 13,
+  handB: 13,
   upperLegF: 14,
   upperLegB: 14,
   lowerLegF: 12,
   lowerLegB: 12,
-  footF: 12,
-  footB: 12,
+  footF: 15,
+  footB: 15,
 };
 
 export const ARENA = {

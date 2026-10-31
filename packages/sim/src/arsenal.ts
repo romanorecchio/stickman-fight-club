@@ -1,3 +1,4 @@
+import { knockDown, launch as launchBody } from './knock.js';
 import {
   rollWeapon,
   weaponById,
@@ -542,8 +543,9 @@ function applyRaw(victim: Fighter, damage: number, dx: number, dy: number, knock
   victim.hp = Math.max(0, victim.hp - dealt);
   victim.taken += dealt;
   const impulse = Math.min(26, 10 + knock * 8) * (blocked ? 0.45 : 1);
-  const torso = victim.bodies.torso;
-  torso.applyLinearImpulse({ x: dx * impulse, y: Math.max(0.1, dy) * impulse * 0.65 }, torso.getWorldCenter(), true);
+  // Whole-body launch (see knock.ts) so weapon hits send people cartwheeling without stretching joints.
+  const dv = impulse * 0.28;
+  launchBody(victim, dx * dv, Math.max(0.25, dy) * dv * 0.9, -Math.sign(dx || 1) * dv * 0.55);
   victim.flash = 0.12;
   victim.balanceMute = Math.max(victim.balanceMute, knock > 1.4 ? 0.35 : 0.12);
   if (victim.hp <= 0) {
@@ -553,8 +555,7 @@ function applyRaw(victim: Fighter, damage: number, dx: number, dy: number, knock
     victim.attack = null;
     victim.strike = null;
   } else if (knock > 1.5 && !blocked) {
-    victim.state = 'fallen';
-    victim.stateTime = 0;
+    knockDown(victim, 0.5 + knock * 0.3);
   } else {
     victim.hitStun = Math.max(victim.hitStun, 0.12);
   }

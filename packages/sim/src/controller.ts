@@ -9,7 +9,7 @@ import {
   type JointName,
 } from '@sfc/shared';
 import type { RevoluteJoint } from 'planck';
-import type { Fighter } from './fighter.js';
+import { noise01, type Fighter, type UserData } from './fighter.js';
 import { bendSign, solveTwoLink } from './ik.js';
 import { LEN, TORSO } from './metrics.js';
 
@@ -28,6 +28,13 @@ interface CharacterPose {
 
 export function prepareFighter(f: Fighter, input: InputFrame, dt: number, time: number, params: BalanceParams): void {
   f.lastInput = input;
+  f.clock = time;
+  f.dizzy = Math.max(0, f.dizzy - dt);
+  f.daze = Math.max(0, f.daze - dt * 0.35);
+  f.getupGrace = Math.max(0, f.getupGrace - dt);
+  f.groundY = probeGround(f);
+  const vx = f.bodies.torso.getLinearVelocity().x;
+  f.laggedVx += (vx - f.laggedVx) * (1 - Math.exp(-3.2 * dt));
   f.cooldownPunch = Math.max(0, f.cooldownPunch - dt);
   f.cooldownKick = Math.max(0, f.cooldownKick - dt);
   f.hitStun = Math.max(0, f.hitStun - dt);
@@ -60,13 +67,17 @@ export function prepareFighter(f: Fighter, input: InputFrame, dt: number, time: 
     }
   }
 
-  if (input.kick && f.cooldownKick <= 0 && canAct) {
+  // One attack button: on the ground it's a haymaker, in the air it's a flying drop-kick.
+  const airKick = input.punch && !f.grounded && !f.weaponId && f.state === 'air';
+  if ((input.kick || airKick) && f.cooldownKick <= 0 && canAct) {
     beginStrike(f, 'kick', time);
   } else if (input.punch && f.cooldownPunch <= 0 && canAct && f.attack !== 'kick') {
     beginStrike(f, 'punch', time);
   }
 
-  if (input.grab && !f.prevGrab && canAct && !f.grab && !f.heldBy) {
+  // One grab button: press to grab, press again while holding someone to throw them.
+  if (input.grab && !f.prevGrab && f.grab) f.throwQueued = true;
+  else if (input.grab && !f.prevGrab && canAct && !f.grab && !f.heldBy) {
     f.grabIntent = 0.48;
     if (f.attack === 'punch') f.attack = null;
   }
@@ -95,9 +106,10 @@ export function driveFighter(f: Fighter, input: InputFrame, dt: number, params: 
 
   if (!limp) {
     const mute = f.balanceMute > 0 ? 0.1 : f.hitStun > 0 ? 0.42 : f.state === 'stumble' ? 0.5 : 1;
-    const getupBoost = f.state === 'getup' ? 1.45 : 1;
+    const getupBoost = f.state === 'getup' ? 1.3 : 1;
     const held = f.heldBy ? 0.6 : 1;
-    let torque = -angle * params.uprightKp * mute * getupBoost * held - angVel * params.uprightKd;
+    const target = f.state === 'getup' ? wobbleTarget(f) * 0.6 : drunkLean(f, vel.x);
+    let torque = normalizeAngle(target - angle) * params.uprightKp * mute * getupBoost * held - angVel * params.uprightKd;
     torque = clamp(torque, -params.maxUprightTorque, params.maxUprightTorque);
     torso.applyTorque(torque, true);
   }
@@ -106,6 +118,15 @@ export function driveFighter(f: Fighter, input: InputFrame, dt: number, params: 
   if (!limp && f.state !== 'getup') {
     const speed = (input.crouch || f.state === 'crouch' ? params.crouchSpeed : input.sprint ? params.sprintSpeed : params.walkSpeed) * f.moveScale;
     targetVx = clamp(input.moveX, -1, 1) * speed;
+    const [a1, a2] = phases(f);
+    if (Math.abs(targetVx) > 0.05) {
+      // Surge and hesitate like someone who had six beers.
+      targetVx *= 1 + 0.22 * Math.sin(f.clock * 2.6 + a1) + 0.12 * Math.sin(f.clock * 5.9 + a2);
+    } else if (f.grounded && f.attack === null && !f.blocking && !f.grab) {
+      // Standing still is a negotiation: drift back and forth a little.
+      const drunk = f.dizzy > 0 ? 2.2 : 1;
+      targetVx = drunk * (0.1 * Math.sin(f.clock * 0.83 + a2) + 0.05 * Math.sin(f.clock * 1.9 + a1));
+    }
     if (f.blocking) targetVx *= 0.55;
     if (f.attack === 'kick') targetVx *= 0.45;
   }
@@ -113,16 +134,20 @@ export function driveFighter(f: Fighter, input: InputFrame, dt: number, params: 
   const fx = clamp((targetVx - vel.x) * params.speedKp * accel, -params.maxBalanceForce, params.maxBalanceForce);
   if (Math.abs(fx) > 0.5) torso.applyForce({ x: fx, y: 0 }, hip, true);
 
+  const hipH = hip.y - f.groundY;
   if (f.grounded && f.balanceMute <= 0 && (f.state === 'idle' || f.state === 'walk' || f.state === 'sprint' || f.state === 'stumble')) {
-    const err = 0.8 - hip.y;
-    if (err > 0.03) torso.applyForceToCenter({ x: 0, y: clamp(err * 520, 0, 280) }, true);
+    // Springy, under-damped hip support: the body bobs on every step instead of riding a rail.
+    const moving = f.state === 'walk' || f.state === 'sprint';
+    const want = 0.79 - (moving ? 0.05 * Math.abs(Math.sin(f.phase)) : 0.015 + 0.015 * Math.sin(f.clock * 2.2));
+    const err = want - hipH;
+    if (err > -0.04) torso.applyForceToCenter({ x: 0, y: clamp(err * 900 - vel.y * 14, 0, 300) }, true);
   }
   if (f.grounded && f.state === 'crouch') {
-    const err = 0.48 - hip.y;
+    const err = 0.48 - hipH;
     if (err < -0.02) torso.applyForceToCenter({ x: 0, y: clamp(err * 320, -200, 0) }, true);
   }
-  if (f.state === 'getup' && f.stateTime > 0.28 && f.grounded && hip.y < 0.74) {
-    torso.applyForceToCenter({ x: 0, y: clamp((0.8 - hip.y) * 220, 0, 210) }, true);
+  if (f.state === 'getup' && f.stateTime > 0.28 && f.grounded && hipH < 0.74) {
+    torso.applyForceToCenter({ x: 0, y: clamp((0.8 - hipH) * 220, 0, 210) }, true);
   }
 
   if (f.canCutJump) f.jumpAge += dt;
@@ -159,9 +184,10 @@ export function driveFighter(f: Fighter, input: InputFrame, dt: number, params: 
   }
 
   if (limp) {
+    // A whisper of joint friction lets a limp body settle instead of buzzing on the floor.
     for (const name of JOINTS) {
       f.joints[name].setMotorSpeed(0);
-      f.joints[name].setMaxMotorTorque(0);
+      f.joints[name].setMaxMotorTorque(name === 'neck' ? 0.5 : 1.2);
     }
     return;
   }
@@ -200,7 +226,7 @@ function beginStrike(f: Fighter, kind: 'punch' | 'kick', time: number): void {
 function updateState(f: Fighter, input: InputFrame, dt: number, params: BalanceParams): void {
   const angle = normalizeAngle(f.bodies.torso.getAngle());
   const angVel = f.bodies.torso.getAngularVelocity();
-  const hipY = f.bodies.torso.getWorldPoint({ x: 0, y: -TORSO.hy }).y;
+  const hipY = f.bodies.torso.getWorldPoint({ x: 0, y: -TORSO.hy }).y - f.groundY;
   const abs = Math.abs(angle);
 
   if (f.state === 'ko') {
@@ -212,9 +238,10 @@ function updateState(f: Fighter, input: InputFrame, dt: number, params: BalanceP
     f.stateTime += dt;
     const vel = f.bodies.torso.getLinearVelocity();
     const calm = Math.abs(angVel) < 2.4 && Math.hypot(vel.x, vel.y) < 2.1;
-    if ((f.stateTime > 0.42 && calm) || f.stateTime > 1.05) {
+    if ((f.stateTime > f.downFor && calm) || f.stateTime > f.downFor + 0.65) {
       f.state = 'getup';
       f.stateTime = 0;
+      f.downFor = 0.42;
       f.attack = null;
       f.strike = null;
     }
@@ -223,8 +250,12 @@ function updateState(f: Fighter, input: InputFrame, dt: number, params: BalanceP
 
   if (f.state === 'getup') {
     f.stateTime += dt;
-    const up = abs < 0.38 && hipY > 0.66 && f.grounded;
-    if (up && f.stateTime > 0.3) {
+    // After a while, "upright enough" counts: a ledge overhead or a half-crouch must not
+    // trap a fighter in an endless getup loop - let them stagger out of it instead.
+    const up = f.grounded && ((abs < 0.38 && hipY > 0.66) || (f.stateTime > 1.3 && abs < 0.75));
+    // Dizzy fighters take a beat longer, wobbling, before they trust their legs.
+    if (up && f.stateTime > (f.dizzy > 0 ? 0.75 : 0.3)) {
+      f.getupGrace = 0.9;
       f.state = 'idle';
       f.stateTime = 0;
       f.balanceMute = 0;
@@ -254,10 +285,23 @@ function updateState(f: Fighter, input: InputFrame, dt: number, params: BalanceP
   else if (Math.abs(input.moveX) > 0.1) f.state = input.sprint ? 'sprint' : 'walk';
   else f.state = 'idle';
 
-  if ((f.state === 'walk' || f.state === 'sprint') && f.grounded) {
-    f.phase += dt * (f.state === 'sprint' ? 10.6 : 7.6);
+  const vx = f.bodies.torso.getLinearVelocity().x;
+  const spread = Math.abs(f.bodies.footF.getPosition().x - f.bodies.footB.getPosition().x);
+  const catching = f.state === 'idle' && f.grounded && (Math.abs(angle) > 0.13 || Math.abs(vx) > 0.32 || spread > 0.34);
+  f.stepping = (f.state === 'walk' || f.state === 'sprint' || catching) && f.grounded;
+  if (f.stepping) {
+    // Every step is its own little decision: stride, lift and tempo all vary.
+    const rate = catching ? 5.2 : f.state === 'sprint' ? 10.2 : 6.4 + Math.abs(vx) * 0.55;
+    f.phase += dt * rate * (0.8 + 0.45 * noise01(f.seed, f.stepIndex * 3 + 2));
+    const step = Math.floor(f.phase / Math.PI);
+    if (step !== f.stepIndex) {
+      f.stepIndex = step;
+      f.stepStride = 0.7 + 0.65 * noise01(f.seed, step * 3);
+      f.stepLift = 0.65 + 0.8 * noise01(f.seed, step * 3 + 1);
+    }
   } else {
     f.phase = normalizeAngle(f.phase) * Math.exp(-7 * dt);
+    f.stepIndex = Math.floor(f.phase / Math.PI);
   }
 }
 
@@ -267,7 +311,10 @@ function desiredWorld(f: Fighter, input: InputFrame, other: Fighter | null, tors
   const torso = f.bodies.torso;
   const dir = aimDir(input);
   if (f.state !== 'getup') {
-    const lean = normalizeAngle(torsoAngle);
+    // Legs reach out to catch a leaning torso: overcompensate a little, so a lean turns
+    // into a stumbling catch-step instead of a stiff plank tipping over.
+    const tilt = normalizeAngle(torsoAngle);
+    const lean = tilt + clamp(tilt * 0.3, -0.25, 0.25);
     world.hipF = normalizeAngle(world.hipF - lean);
     world.hipB = normalizeAngle(world.hipB - lean);
   }
@@ -316,42 +363,50 @@ function desiredWorld(f: Fighter, input: InputFrame, other: Fighter | null, tors
     world.kneeF = solved.joint2;
   }
 
-  world.neck = clamp(normalizeAngle(f.facing * 0.05 - torso.getAngle()), -0.8, 0.8);
+  const [, b2] = phases(f);
+  const bob = 0.22 * Math.sin(f.clock * 2.1 + b2) + (f.state === 'walk' || f.state === 'sprint' ? 0.18 * Math.sin(f.phase * 2) : 0);
+  world.neck = clamp(normalizeAngle(f.facing * 0.05 + bob - torso.getAngle()), -0.8, 0.8);
   world.ankleF = clamp(-f.bodies.lowerLegF.getAngle(), -0.9, 0.9);
   world.ankleB = clamp(-f.bodies.lowerLegB.getAngle(), -0.9, 0.9);
   return world;
 }
 
 function characterPose(f: Fighter, input: InputFrame): CharacterPose {
+  const [a1, a2, a3] = phases(f);
+  const t = f.clock;
   if (f.state === 'getup') {
     const early = f.stateTime < 0.42;
+    // Shaky baby-deer legs and arms windmilling for balance.
+    const shake = (f.dizzy > 0 ? 0.28 : 0.14) * Math.sin(t * 21 + a1);
+    const flail = Math.sin(t * 8.5 + a2);
     return {
-      shoulderF: early ? 0.55 : 0.9,
-      elbowF: early ? 0.35 : 0.45,
+      shoulderF: early ? 0.55 : 1.5 + 0.8 * flail,
+      elbowF: early ? 0.35 : 0.5,
       wristF: 0.1,
-      shoulderB: early ? 0.35 : 0.7,
-      elbowB: 0.3,
+      shoulderB: early ? 0.35 : 1.3 - 0.8 * flail,
+      elbowB: 0.4,
       wristB: 0.1,
-      hipF: early ? 0.85 : 0.22,
-      kneeF: early ? 2.05 : 0.35,
-      hipB: early ? 0.7 : 0.12,
-      kneeB: early ? 2.0 : 0.3,
+      hipF: early ? 0.85 : 0.3 + shake,
+      kneeF: early ? 2.05 : 0.5 + Math.abs(shake),
+      hipB: early ? 0.7 : 0.1 - shake,
+      kneeB: early ? 2.0 : 0.45 + Math.abs(shake),
     };
   }
 
   if (f.state === 'air' || !f.grounded) {
-    const rising = f.vyPrev > 0.4;
+    // Cartoon panic: windmill the arms and bicycle the legs.
+    const spin = t * 13;
     return {
-      shoulderF: rising ? 1.55 : 1.05,
-      elbowF: rising ? 0.55 : 0.35,
+      shoulderF: 1.3 + 1.25 * Math.sin(spin),
+      elbowF: 0.5 + 0.3 * Math.sin(spin * 1.3),
       wristF: 0.1,
-      shoulderB: rising ? 1.25 : 0.75,
-      elbowB: 0.4,
+      shoulderB: 1.3 + 1.25 * Math.sin(spin + Math.PI),
+      elbowB: 0.5,
       wristB: 0.1,
-      hipF: rising ? 0.4 : 0.12,
-      kneeF: rising ? 1.2 : 0.22,
-      hipB: rising ? 0.25 : 0.05,
-      kneeB: rising ? 1.05 : 0.18,
+      hipF: 0.35 + 0.45 * Math.sin(t * 10),
+      kneeF: 0.9 + 0.4 * Math.sin(t * 10 + 1),
+      hipB: 0.1 - 0.45 * Math.sin(t * 10),
+      kneeB: 0.8 - 0.4 * Math.sin(t * 10 + 1),
     };
   }
 
@@ -370,33 +425,41 @@ function characterPose(f: Fighter, input: InputFrame): CharacterPose {
     };
   }
 
-  const moving = f.state === 'walk' || f.state === 'sprint';
+  const moving = f.state === 'walk' || f.state === 'sprint' || Math.abs(normalizeAngle(f.phase)) > 0.05;
   const sprint = f.state === 'sprint';
   const sF = Math.sin(f.phase);
   const sB = -sF;
-  const stride = (sprint ? 0.48 : 0.34) * (moving ? 1 : 0);
-  const arm = moving ? (sprint ? 0.5 : 0.36) : 0;
-  const lead = moving ? clamp(f.bodies.torso.getLinearVelocity().x * f.facing * 0.07, -0.28, 0.28) : 0;
+  const odd = (f.stepIndex & 1) === 1;
+  // Stride and knee lift are re-rolled every step, so no two steps match.
+  // Idle "catch" steps are little shuffles; real walking takes big goofy strides.
+  const shuffle = f.state === 'idle' ? 0.35 : 1;
+  const stride = (sprint ? 0.7 : 0.58) * f.stepStride * (moving ? shuffle : 0);
+  const lift = (sprint ? 1.35 : 1.2) * f.stepLift * (moving ? shuffle : 0);
+  const lead = moving ? clamp(f.bodies.torso.getLinearVelocity().x * f.facing * 0.07, -0.3, 0.3) : 0;
+  const knees = 0.2 + 0.08 * Math.sin(t * 4.1 + a3) + (f.dizzy > 0 ? 0.15 : 0);
+  // Arms: noodles on a breeze while idle, flailing while walking.
+  const flail = moving ? (sprint ? 1.0 : 0.8) : 0.18;
   const pose: CharacterPose = {
-    shoulderF: 0.22 - sF * arm,
-    elbowF: 0.38,
+    shoulderF: (moving ? 0.6 : 0.35) - sF * flail + 0.5 * Math.sin(t * 3.1 + a1) * (moving ? 1 : 0.5),
+    elbowF: 0.55 + 0.35 * Math.sin(t * 4.3 + a2),
     wristF: 0.12,
-    shoulderB: 0.12 - sB * arm * 0.85,
-    elbowB: 0.32,
+    shoulderB: (moving ? 0.5 : 0.3) - sB * flail * 0.9 + 0.5 * Math.sin(t * 2.6 + a3) * (moving ? 1 : 0.5),
+    elbowB: 0.5 + 0.35 * Math.sin(t * 3.7 + a1),
     wristB: 0.1,
-    hipF: sF * stride + lead,
-    kneeF: 0.1 + Math.max(0, sF) * (sprint ? 1.05 : 0.85) * (moving ? 1 : 0),
-    hipB: sB * stride + lead,
-    kneeB: 0.1 + Math.max(0, sB) * (sprint ? 1.05 : 0.85) * (moving ? 1 : 0),
+    hipF: sF * stride * (odd ? 1.25 : 1) + lead,
+    kneeF: knees + Math.max(0, sF) * lift,
+    hipB: sB * stride * (odd ? 1 : 1.25) + lead,
+    kneeB: knees + Math.max(0, sB) * lift,
   };
 
   if (f.state === 'stumble') {
-    pose.shoulderF = 1.45;
+    const wave = Math.sin(t * 11);
+    pose.shoulderF = 1.9 + 0.7 * wave;
     pose.elbowF = 0.35;
-    pose.shoulderB = -0.55;
+    pose.shoulderB = 1.6 - 0.7 * wave;
     pose.elbowB = 0.3;
-    pose.kneeF = Math.max(pose.kneeF, 0.4);
-    pose.kneeB = Math.max(pose.kneeB, 0.4);
+    pose.kneeF = Math.max(pose.kneeF, 0.45);
+    pose.kneeB = Math.max(pose.kneeB, 0.45);
   }
 
   if (f.blocking) {
@@ -408,6 +471,49 @@ function characterPose(f: Fighter, input: InputFrame): CharacterPose {
     pose.wristB = 0.15;
   }
   return pose;
+}
+
+/** Three per-fighter phase offsets so a crowd never sways in sync. */
+function phases(f: Fighter): [number, number, number] {
+  const s = f.seed;
+  return [((s & 0xff) / 255) * 6.283, (((s >>> 8) & 0xff) / 255) * 6.283, (((s >>> 16) & 0xff) / 255) * 6.283];
+}
+
+/** Target torso angle: a slow drunken sway plus lagging, overshooting lean into motion. */
+function drunkLean(f: Fighter, vx: number): number {
+  const [a1, a2, a3] = phases(f);
+  const t = f.clock;
+  const moving = Math.abs(f.lastInput.moveX) > 0.1;
+  const amp = (moving ? 1.7 : 1) * (f.dizzy > 0 ? 2.1 : 1);
+  const freq = moving ? 1.35 : 1;
+  let sway = amp * (0.1 * Math.sin(t * 1.3 * freq + a1) + 0.06 * Math.sin(t * 2.3 * freq + a2) + 0.03 * Math.sin(t * 3.7 * freq + a3));
+  if (!f.grounded) sway *= 0.4;
+  // Upper body trails on a start and keeps going on a stop.
+  const lean = clamp(-0.05 * f.laggedVx + 0.045 * (vx - f.laggedVx), -0.38, 0.38);
+  const lunge = f.attack === 'punch' ? -f.facing * 0.2 : 0;
+  return sway + lean + lunge;
+}
+
+/** Wobbly stand-up target: big lazy circles that settle as the dizziness wears off. */
+function wobbleTarget(f: Fighter): number {
+  const [a1] = phases(f);
+  const amp = 0.15 + Math.min(1, f.dizzy) * 0.25;
+  return amp * Math.sin(f.clock * 5.2 + a1);
+}
+
+/** Height of whatever the fighter is standing over, so platforms feel like the floor. */
+function probeGround(f: Fighter): number {
+  const hip = f.bodies.torso.getWorldPoint({ x: 0, y: -TORSO.hy });
+  let best = f.groundY;
+  let found = false;
+  f.bodies.torso.getWorld().rayCast({ x: hip.x, y: hip.y }, { x: hip.x, y: hip.y - 1.4 }, (fixture, point, _normal, fraction) => {
+    const data = fixture.getUserData() as UserData | null;
+    if (!data || data.kind !== 'world') return -1;
+    best = point.y;
+    found = true;
+    return fraction;
+  });
+  return found ? best : Math.min(f.groundY, hip.y - 2);
 }
 
 function toWorld(pose: CharacterPose, facing: 1 | -1): Record<JointName, number> {
@@ -475,7 +581,7 @@ function limitsFor(name: JointName, facing: 1 | -1, open: boolean): [number, num
 
 function torqueFor(name: JointName, f: Fighter, params: BalanceParams, kicking: boolean): number {
   const mute = f.balanceMute > 0 ? 0.18 : 1;
-  if (name === 'neck') return (f.hitStun > 0 ? 6 : 22) * mute;
+  if (name === 'neck') return (f.hitStun > 0 || f.dizzy > 0 ? 1.2 : 2.8) * mute;
   if (name === 'wristF' || name === 'wristB') return 8 * mute;
   if (name === 'ankleF' || name === 'ankleB') return params.legTorque * 0.48 * mute;
   if (name === 'hipF' || name === 'hipB' || name === 'kneeF' || name === 'kneeB') {
@@ -484,10 +590,11 @@ function torqueFor(name: JointName, f: Fighter, params: BalanceParams, kicking: 
     if (f.attack === 'kick' && (name === 'hipF' || name === 'kneeF')) torque *= 1.75;
     return torque * mute;
   }
+  // Arms are floppy noodles until they have a job to do.
   let torque = params.armTorque;
-    if (f.attack === 'punch' && (name === 'shoulderF' || name === 'elbowF')) torque *= 2;
-  if (f.blocking) torque *= 1.45;
-  if (f.grab || f.grabIntent > 0) torque *= 1.35;
+  if (f.attack === 'punch' && (name === 'shoulderF' || name === 'elbowF')) torque = Math.max(torque * 5, 70);
+  if (f.blocking) torque = Math.max(torque * 3.5, 50);
+  if (f.grab || f.grabIntent > 0) torque = Math.max(torque * 3, 45);
   return torque * mute;
 }
 

@@ -84,6 +84,30 @@ describe('weapons and maps', () => {
     expect(sim.weaponOf('a')).toBe(pickup.weapon);
   });
 
+  it('the one grab button picks a weapon up and, pressed again, drops it', () => {
+    const sim = new Simulation({ roster: 'empty', ai: false, seed: 6, spawnProtect: 0 });
+    sim.addFighter('a', 'Ada', 0);
+    sim.deployWeapons(true, { melee: true, firearm: true, explosive: true, novelty: true });
+    const pickup = sim.getSnapshot('a').pickups[0]!;
+    const here = sim.summaries()[0]!;
+    sim.debugShift('a', pickup.x - here.x, 0);
+    step(sim, ['a'], 0.1, () => ({ grab: true }));
+    step(sim, ['a'], 0.3);
+    expect(sim.weaponOf('a')).toBe(pickup.weapon);
+    step(sim, ['a'], 0.4, () => ({ punch: true }));
+    step(sim, ['a'], 0.3);
+    expect(sim.getStability().nanEvents).toBe(0);
+    const now = sim.summaries()[0]!;
+    const spots = [-8, -6, -4, -2, 0, 2, 4, 6, 8];
+    const items = sim.getSnapshot('a').pickups;
+    const clear = spots.find((x) => items.every((item) => Math.abs(item.x - x) > 2)) ?? 0;
+    sim.debugShift('a', clear - now.x, 0);
+    step(sim, ['a'], 0.5);
+    step(sim, ['a'], 0.1, () => ({ grab: true }));
+    step(sim, ['a'], 0.3);
+    expect(sim.weaponOf('a')).toBeFalsy();
+  });
+
   it('lava under a gap respawns a fighter who falls in', () => {
     const sim = new Simulation({ roster: 'empty', ai: false, mapId: 'lava', seed: 7 });
     sim.addFighter('a', 'Ada', 0);

@@ -15,7 +15,7 @@ function dump(sim: Simulation): string {
   return JSON.stringify(
     {
       player: sim.getProbe('player'),
-      dummy: sim.getProbe('dummy'),
+      dummy: sim.getSnapshot().fighters.some((f) => f.id === 'dummy') ? sim.getProbe('dummy') : null,
       stability: sim.getStability(),
     },
     null,
@@ -54,7 +54,9 @@ describe('ragdoll stability', () => {
   });
 
   it('walks both directions and sprints faster than it walks', () => {
+    // No dummy: it stands in the way and caps how far a fast walker can get.
     const right = new Simulation({ ai: false, spawnProtect: 0 });
+    right.setDummyEnabled(false);
     const x0 = right.getProbe('player').x;
     run(right, 1.6, hold({ moveX: 1 }));
     const walked = right.getProbe('player').x - x0;
@@ -63,11 +65,13 @@ describe('ragdoll stability', () => {
     expect(right.getProbe('player').hipY, dump(right)).toBeGreaterThan(0.65);
 
     const left = new Simulation({ ai: false, spawnProtect: 0 });
+    left.setDummyEnabled(false);
     const lx0 = left.getProbe('player').x;
     run(left, 1.6, hold({ moveX: -1, aimX: -1 }));
     expect(lx0 - left.getProbe('player').x, dump(left)).toBeGreaterThan(2.2);
 
     const sprint = new Simulation({ ai: false, spawnProtect: 0 });
+    sprint.setDummyEnabled(false);
     const sx0 = sprint.getProbe('player').x;
     run(sprint, 1.6, hold({ moveX: 1, sprint: true }));
     expect(sprint.getProbe('player').x - sx0, dump(sprint)).toBeGreaterThan(walked + 1);
@@ -143,7 +147,8 @@ describe('ragdoll stability', () => {
       kickHp = Math.min(kickHp, dummy.hp);
       kickVx = Math.max(kickVx, Math.abs(dummy.vx));
     }
-    expect(kickHp, dump(kick)).toBeLessThan(85);
+    // Kicks now launch the dummy out of reach, so one clean kick is the bar, not two.
+    expect(kickHp, dump(kick)).toBeLessThan(92);
     expect(kickVx, dump(kick)).toBeGreaterThan(2);
     expect(kick.getStability().rescueEvents).toBe(0);
   });

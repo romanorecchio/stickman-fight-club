@@ -59,8 +59,9 @@ export class OnlineSession {
     this.socket.on('snapshot', (snap: NetSnapshot) => {
       this.buffer.push(snap);
       if (this.buffer.length > 40) this.buffer.splice(0, this.buffer.length - 40);
+      this.trackClock(snap.time);
       const mine = snap.fighters.find((fighter) => fighter.id === snap.you);
-      if (mine) this.predictor?.reconcile(mine, snap.ackSeq);
+      if (mine) this.predictor?.reconcile(mine, snap.ackSeq, snap.time);
     });
     this.socket.on('problem', (problem: RoomError) => this.hooks.onProblem(problem));
     this.socket.on('left', () => this.hooks.onLeft());
@@ -119,13 +120,27 @@ export class OnlineSession {
     return this.buffer[this.buffer.length - 1] ?? null;
   }
 
-  /** Two snapshots around render time, for remote interpolation. */
+  /** Server-time minus local-time, smoothed. Lets remote players move every frame, not every packet. */
+  private clockOffset: number | null = null;
+
+  private trackClock(serverTime: number): void {
+    const sample = serverTime - performance.now() / 1000;
+    if (this.clockOffset === null || Math.abs(sample - this.clockOffset) > 1) this.clockOffset = sample;
+    // Late packets only ever make the sample smaller, so trust early ones more.
+    else this.clockOffset += (sample - this.clockOffset) * (sample > this.clockOffset ? 0.25 : 0.03);
+  }
+
+  /**
+   * Two snapshots around render time, for remote interpolation. Render time runs on a
+   * smooth local clock about 2.5 snapshots behind the server, so remote stickmen glide at
+   * the display rate instead of stepping at the 20 Hz packet rate.
+   */
   sample(nowMs: number): { older: NetSnapshot; newer: NetSnapshot; alpha: number } | null {
     if (this.buffer.length === 0) return null;
     const newest = this.buffer[this.buffer.length - 1];
     if (!newest) return null;
-    const delay = Math.min(0.4, Math.max(0.08, (this.rtt / 1000) * 1.4));
-    const renderTime = newest.time - delay;
+    const delay = 0.12 + Math.min(0.1, Math.max(0, this.rtt / 1000 - 0.15) * 0.3);
+    const renderTime = (this.clockOffset === null ? newest.time : nowMs / 1000 + this.clockOffset) - delay;
     let older = this.buffer[0] ?? newest;
     let newer = newest;
     for (let i = 0; i < this.buffer.length; i += 1) {
@@ -139,12 +154,11 @@ export class OnlineSession {
     }
     const span = newer.time - older.time;
     const alpha = span <= 0.0001 ? 1 : Math.min(1, Math.max(0, (renderTime - older.time) / span));
-    void nowMs;
     return { older, newer, alpha };
   }
 
   predicted(): FighterSnapshot | null {
-    return this.predictor?.pose() ?? null;
+    return this.predictor?.display() ?? null;
   }
 
   private reset(): void {
@@ -152,5 +166,6 @@ export class OnlineSession {
     this.welcome = null;
     this.lobby = null;
     this.predictor = null;
+    this.clockOffset = null;
   }
 }

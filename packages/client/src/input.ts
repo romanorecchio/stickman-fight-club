@@ -32,17 +32,17 @@ export function installInput(canvas: HTMLCanvasElement): void {
   canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId);
     if (event.button === 0) holds.punch = true;
-    if (event.button === 2) holds.block = true;
+    if (event.button === 2) holds.grab = true;
     point(canvas, event);
   });
   canvas.addEventListener('pointerup', (event) => {
     if (event.button === 0) holds.punch = false;
-    if (event.button === 2) holds.block = false;
+    if (event.button === 2) holds.grab = false;
   });
   canvas.addEventListener('pointermove', (event) => point(canvas, event));
   window.addEventListener('pointerup', (event) => {
     if (event.button === 0) holds.punch = false;
-    if (event.button === 2) holds.block = false;
+    if (event.button === 2) holds.grab = false;
   });
 
   for (const button of document.querySelectorAll<HTMLButtonElement>('#touch button')) {
@@ -79,27 +79,41 @@ export function consumePress(code: string): boolean {
   return true;
 }
 
-export function buildInput(seq: number, aim: Vec2): InputFrame {
+let runFor = 0;
+let lastMove = 0;
+
+/**
+ * Four verbs only: move, jump, hit, grab/throw. Sprint kicks in by itself after a
+ * second of running; aiming is automatic (see main.ts); kicks happen in mid-air.
+ */
+export function buildInput(seq: number, aim: Vec2, dt = 1 / 60): InputFrame {
   const left = keys.has('KeyA') || keys.has('ArrowLeft') || holds.left;
   const right = keys.has('KeyD') || keys.has('ArrowRight') || holds.right;
   let moveX = 0;
   if (left) moveX -= 1;
   if (right) moveX += 1;
+  runFor = moveX !== 0 && moveX === lastMove ? runFor + dt : 0;
+  lastMove = moveX;
   return {
     seq,
     moveX,
-    jump: keys.has('KeyW') || keys.has('ArrowUp') || holds.jump,
-    crouch: keys.has('KeyS') || keys.has('ArrowDown') || holds.crouch,
-    sprint: keys.has('ShiftLeft') || keys.has('ShiftRight') || holds.sprint,
-    punch: holds.punch,
-    kick: keys.has('Space') || holds.kick,
-    block: holds.block,
-    grab: keys.has('KeyE') || holds.grab,
-    throw: keys.has('KeyQ') || holds.throw,
-    reload: consumePress('KeyR'),
-    pickup: consumePress('KeyF'),
-    drop: consumePress('KeyG'),
+    jump: keys.has('KeyW') || keys.has('ArrowUp') || keys.has('Space') || holds.jump,
+    crouch: false,
+    sprint: runFor > 0.9,
+    punch: holds.punch || keys.has('KeyJ'),
+    kick: false,
+    block: false,
+    grab: holds.grab || keys.has('KeyK'),
+    throw: false,
+    reload: false,
+    pickup: false,
+    drop: false,
     aimX: aim.x,
     aimY: aim.y,
   };
+}
+
+/** Last horizontal direction the player pushed, for auto-aim. */
+export function heading(): number {
+  return lastMove;
 }
