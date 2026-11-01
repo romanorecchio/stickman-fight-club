@@ -1,8 +1,13 @@
+# Render free web service: no card needed. Free instances sleep after 15 min with no
+# traffic and wake on the next visit (~1 min). No disk is needed: rooms live in memory.
 services:
   - type: web
     name: stickman-fight-club
     runtime: docker
     plan: free
+    region: virginia
+    branch: main
+    autoDeploy: true
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV

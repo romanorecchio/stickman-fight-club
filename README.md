@@ -4,6 +4,8 @@ Real-time 2D stickman fighting. Create a lobby, share the 6-character room code,
 
 The full design is in [docs/SPEC.md](docs/SPEC.md). How the code is split is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Hosting is in [docs/DEPLOY.md](docs/DEPLOY.md).
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/romanorecchio/stickman-fight-club) (free plan, no card)
+
 ## Run locally
 
 ```bash
@@ -53,4 +55,4 @@ On a touch screen, the on-screen buttons drive the same actions. Balance sliders
 
 ## Limits right now
 
-Free-for-all, team deathmatch, and duels score kills, respawn (or eliminate), and show a scoreboard. The host picks the mode (free-for-all, teams, duels, infection, or king of the hill), the map, and the weapon classes. Late joiners can spectate, jump in, or be turned away. Press C while spectating to switch who you follow. F picks up, R reloads, G drops. There are no accounts, logins, or passwords: open the page, keep the random name (or type your own; it is saved in this browser), pick a hat, face, and color, then create a lobby or join one by code. Every hat, face, and color is open to everyone. Per-player XP, levels, and the leaderboard were removed with accounts; the in-match scoreboard still shows kills, deaths, and score. Elimination and duel kills play a short replay (Skip or Esc). Settings has volume, shake, reduced motion, reduced flash, and a jumpscare opt-out. F3 shows tick and body count. Match rooms vanish when the process stops; the server keeps no database. A hard hit can stretch a joint for a single frame; the solver closes it. Grab is one distance joint. See [docs/DEPLOY.md](docs/DEPLOY.md) to put this on a public URL. That deploy has not been done from this workspace.
+Free-for-all, team deathmatch, and duels score kills, respawn (or eliminate), and show a scoreboard. The host picks the mode (free-for-all, teams, duels, infection, or king of the hill), the map, and the weapon classes. Late joiners can spectate, jump in, or be turned away. Press C while spectating to switch who you follow. F picks up, R reloads, G drops. There are no accounts, logins, or passwords: open the page, keep the random name (or type your own; it is saved in this browser), pick a hat, face, and color, then create a lobby or join one by code. Every hat, face, and color is open to everyone. Per-player XP, levels, and the leaderboard were removed with accounts; the in-match scoreboard still shows kills, deaths, and score. Elimination and duel kills play a short replay (Skip or Esc). Settings has volume, shake, reduced motion, reduced flash, and a jumpscare opt-out. F3 shows tick and body count. Match rooms vanish when the process stops; the server keeps no database. A hard hit can stretch a joint for a single frame; the solver closes it. Grab is one distance joint. See [docs/DEPLOY.md](docs/DEPLOY.md) to put this on a public URL.
