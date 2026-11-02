@@ -35,7 +35,10 @@ export async function startServer(options: ListenOptions = {}): Promise<RunningS
     options.corsOrigin ??
     (process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://127.0.0.1:4317', 'http://localhost:4317']);
   const graceMs = options.graceMs ?? Number(process.env.RECONNECT_GRACE_MS ?? 12_000);
-  const staticDir = options.staticDir ?? process.env.STATIC_DIR;
+  const staticDir =
+    options.staticDir ??
+    process.env.STATIC_DIR ??
+    (existsSync(path.resolve('packages/client/dist/index.html')) ? path.resolve('packages/client/dist') : undefined);
   const delayMs = Math.max(0, Number(process.env.SFC_DELAY_MS ?? 0));
   const later = (fn: () => void) => {
     if (delayMs <= 0) fn();
